@@ -1,0 +1,6 @@
+.env
+.env.*
+node_modules/
+.promptfoo/
+*/settings.local.json
+/.claude

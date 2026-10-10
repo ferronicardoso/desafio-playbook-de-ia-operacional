@@ -1,0 +1,23 @@
+# DevOps
+
+Prompts voltados a **operação e confiabilidade da plataforma Aegis**: triagem de incidentes, análise de causa-raiz, decisões de arquitetura sob carga, migração de pipelines e endurecimento de configuração de infraestrutura.
+
+## Escopo
+
+Entram aqui prompts relacionados a:
+
+- Triagem de saúde de workloads em Kubernetes.
+- Padronização de notas de triagem de alertas.
+- Análise de causa-raiz a partir de configuração, métricas e logs.
+- Apoio a decisões de arquitetura (ex.: backpressure em barramento de eventos).
+- Planejamento de migrações de pipelines de dados.
+- Endurecimento de políticas de rede (NetworkPolicy).
+
+## Fora de escopo
+
+- Escrita de código de aplicação.
+- Conteúdo educacional ou de divulgação sobre os temas acima.
+
+## Prompts
+
+- [triagem-de-pods](./triagem-de-pods/) — Triagem rápida da saúde dos pods de um namespace a partir de um snapshot de kubectl colado pelo plantonista, com causa provável e próxima ação.
