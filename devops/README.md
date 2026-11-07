@@ -24,3 +24,6 @@ Entram aqui prompts relacionados a:
 - [nota-de-triagem](./nota-de-triagem/) — Converte um alerta cru de observabilidade em uma nota de triagem padronizada de cinco linhas para a passagem de turno SRE.
 - [causa-raiz](./causa-raiz/) — Analisa um pacote de artefatos de uma degradação em sistemas de busca e indexação sobre Elasticsearch/JVM e produz um diagnóstico de causa-raiz rastreável, com nível de confiança e ações proporcionais.
 - [backpressure-no-relay](./backpressure-no-relay/) — Compara estratégias de backpressure para um barramento de eventos a partir do estado atual e das restrições informadas, com aritmética explícita, eliminação por restrições inegociáveis e recomendação justificada.
+- [diagnostico-do-forge](./diagnostico-do-forge/) — Produz o diagnóstico estruturado do estado atual de um pipeline de dados em lote antes da migração para arquitetura orientada a eventos.
+- [passos-da-migracao-do-forge](./passos-da-migracao-do-forge/) — Converte o diagnóstico de um pipeline em lote em uma sequência ordenada de etapas incrementais de migração para arquitetura orientada a eventos.
+- [plano-de-migracao-do-forge](./plano-de-migracao-do-forge/) — Transforma a sequência de etapas de migração de um pipeline para arquitetura orientada a eventos em plano executável, verificável e reversível.
