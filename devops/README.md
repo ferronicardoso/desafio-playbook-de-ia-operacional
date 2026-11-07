@@ -21,3 +21,4 @@ Entram aqui prompts relacionados a:
 ## Prompts
 
 - [triagem-de-pods](./triagem-de-pods/) — Triagem rápida da saúde dos pods de um namespace a partir de um snapshot de kubectl colado pelo plantonista, com causa provável e próxima ação.
+- [nota-de-triagem](./nota-de-triagem/) — Converte um alerta cru de observabilidade em uma nota de triagem padronizada de cinco linhas para a passagem de turno SRE.

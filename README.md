@@ -17,3 +17,4 @@ A estrutura segue o template [prompt-registry](https://github.com/fabricioverone
 Operação e confiabilidade da plataforma: triagem de incidentes, causa-raiz, decisões de arquitetura, migração de pipelines e endurecimento de configuração.
 
 - [triagem-de-pods](./devops/triagem-de-pods/) — Triagem rápida da saúde dos pods de um namespace a partir de um snapshot de kubectl colado pelo plantonista, com causa provável e próxima ação.
+- [nota-de-triagem](./devops/nota-de-triagem/) — Converte um alerta cru de observabilidade em uma nota de triagem padronizada de cinco linhas para a passagem de turno SRE.
