@@ -27,3 +27,4 @@ Entram aqui prompts relacionados a:
 - [diagnostico-do-forge](./diagnostico-do-forge/) — Produz o diagnóstico estruturado do estado atual de um pipeline de dados em lote antes da migração para arquitetura orientada a eventos.
 - [passos-da-migracao-do-forge](./passos-da-migracao-do-forge/) — Converte o diagnóstico de um pipeline em lote em uma sequência ordenada de etapas incrementais de migração para arquitetura orientada a eventos.
 - [plano-de-migracao-do-forge](./plano-de-migracao-do-forge/) — Transforma a sequência de etapas de migração de um pipeline para arquitetura orientada a eventos em plano executável, verificável e reversível.
+- [networkpolicy-sentinel](./networkpolicy-sentinel/) — Analisa uma NetworkPolicy permissiva e gera manifestos endurecidos e rastreáveis a um padrão de segurança, usando somente identificadores do mapa de serviços.

@@ -6,10 +6,8 @@ tags:
   - arquitetura
   - backpressure
   - barramento-de-eventos
-  - observabilidade
   - sre
   - capacidade
-  - decisao-arquitetural
 inputs:
   - nome: cenario
     descricao: "Texto livre com o estado atual do barramento (throughput sustentado, picos observados, retenção, consumidores e suas capacidades, quando conhecidas) e as restrições do time (SLAs por consumidor, orçamento, requisitos de durabilidade e outras)."

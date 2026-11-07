@@ -10,6 +10,36 @@ A estrutura segue o template [prompt-registry](https://github.com/fabricioverone
 2. Abrir o `README.md` do prompt para entender objetivo, variáveis esperadas e limitações.
 3. Copiar o conteúdo do `prompt.md` e substituir os placeholders `{{nome_variavel}}` pelos valores desejados.
 
+## Como o playbook mapeia o template
+
+O repositório foi montado a partir das convenções do `prompt-registry`, sem fork: o template era uma sugestão, e a estrutura foi reproduzida e adaptada neste repositório.
+
+| Convenção do template | Aplicação neste playbook |
+|---|---|
+| Categoria como pasta na raiz, em kebab-case, sem aninhar | Uma única categoria, `devops/`, porque todos os prompts tratam de operação e confiabilidade da plataforma. As demais categorias do template não foram criadas por não terem prompts. |
+| Um prompt por pasta, nomeada pelo resultado | Oito pastas, como `triagem-de-pods` e `networkpolicy-sentinel`. Nenhuma é nomeada pela técnica usada. |
+| `prompt.md` com frontmatter e texto puro, parâmetros em `{{variavel}}` | Cada `prompt.md` traz só o frontmatter e o texto do prompt, autocontido. |
+| `README.md` com o mesmo frontmatter e documentação humana | Frontmatter idêntico nos dois arquivos, com objetivo, quando usar, exemplo e limitações. |
+| `inputs` com `nome` e `descricao` | Um item por placeholder do corpo, incluindo prompts com vários parâmetros (`triagem-de-pods` tem sete). |
+| `versao` em semver | Todos nascem em `1.0.0`. |
+| Commits semânticos com a categoria como escopo | Por exemplo, `feat(devops): adiciona prompt de backpressure`. |
+| Índices nos READMEs | Atualizados na mesma mudança, na raiz e em `devops/`. |
+
+**Mapeamento dos checkpoints:**
+
+| Checkpoint | Prompt(s) |
+|---|---|
+| CP01 | `triagem-de-pods` |
+| CP02 | `nota-de-triagem` |
+| CP03 | `causa-raiz` |
+| CP04 | `backpressure-no-relay` |
+| CP05 | `diagnostico-do-forge`, `passos-da-migracao-do-forge`, `plano-de-migracao-do-forge`: cadeia de três elos, em que a saída de cada um é a entrada do seguinte |
+| CP06 | `networkpolicy-sentinel` |
+
+**Extensões em relação ao template:** os `README.md` ganham as seções **Execução** (modelo, entradas e saída real, com as iterações quando houve refino) e **Curadoria** (técnica, justificativa e refinos). O `CLAUDE.md` registra essas convenções e limita as tags a 2 a 5 por prompt.
+
+**Exemplo completo:** [`devops/networkpolicy-sentinel/`](./devops/networkpolicy-sentinel/) é o mais completo, com `prompt.md` de três placeholders, `README.md` com as iterações v1, v2 e v3 e a execução de validação.
+
 ## Categorias
 
 ### [DevOps](./devops/)
@@ -23,3 +53,4 @@ Operação e confiabilidade da plataforma: triagem de incidentes, causa-raiz, de
 - [diagnostico-do-forge](./devops/diagnostico-do-forge/) — Produz o diagnóstico estruturado do estado atual de um pipeline de dados em lote antes da migração para arquitetura orientada a eventos.
 - [passos-da-migracao-do-forge](./devops/passos-da-migracao-do-forge/) — Converte o diagnóstico de um pipeline em lote em uma sequência ordenada de etapas incrementais de migração para arquitetura orientada a eventos.
 - [plano-de-migracao-do-forge](./devops/plano-de-migracao-do-forge/) — Transforma a sequência de etapas de migração de um pipeline para arquitetura orientada a eventos em plano executável, verificável e reversível.
+- [networkpolicy-sentinel](./devops/networkpolicy-sentinel/) — Analisa uma NetworkPolicy permissiva e gera manifestos endurecidos e rastreáveis a um padrão de segurança, usando somente identificadores do mapa de serviços.
