@@ -855,6 +855,49 @@ kubectl get pods -n kube-system -l k8s-app=kube-dns
 Conclusão — (julgamento): os manifestos corrigidos implementam uma base default-deny explícita, restringem os acessos pelas identidades informadas no mapa e eliminam as liberações genéricas da política original. As duas lacunas de portas de ingress e as dependências operacionais identificadas impedem afirmar que o menor privilégio está totalmente alcançado ou que a implantação pode ocorrer sem impacto. A aprovação final depende das validações descritas.
 ````
 
+### Testes determinísticos (promptfoo)
+
+O manifesto permissivo, o padrão e o mapa de serviços do CP06 rodam como caso de teste em [`promptfooconfig.yaml`](promptfooconfig.yaml), contra dois provedores. Comando, a partir desta pasta:
+
+```powershell
+promptfoo eval -c promptfooconfig.yaml --no-cache --output resultado.json
+```
+
+| Item | Valor |
+|---|---|
+| Versão do promptfoo | 0.125.1 |
+| Provedor 1 | OpenAI `gpt-6-sol`, `reasoning_effort: low` |
+| Provedor 2 | Anthropic `claude-sonnet-5-5`, `thinking.type: between_tools`, `max_tokens: 16000` |
+| Prompt testado | `prompt.md` (arquivo inteiro, com frontmatter) |
+
+Asserts aplicados:
+
+| Requisito | Tipo | Critério |
+|---|---|---|
+| YAML de NetworkPolicy | `contains` | `kind: NetworkPolicy` |
+| `policyTypes` com Ingress e Egress | `javascript` | extrai o bloco ```` ```yaml ````, coleta os itens de `policyTypes` de todos os documentos e exige `Ingress` e `Egress` |
+| Sem allow-all | `javascript` | nenhuma linha `- {}` no bloco yaml corrigido |
+| Egress para Forge e Cerebro | `contains-all` | `5432` e `9200` |
+| Ingress do Relay | `contains` | `app: relay` |
+| Toda regra comentada | `javascript` | cada item de `ingress` e `egress` tem um comentário `#` na linha imediatamente acima |
+| Latência | `latency` | até **60000 ms** (limite próprio; enunciado: 5000 ms) |
+| Custo | `cost` | até **US$ 0,10** (limite próprio; enunciado: US$ 0,01) |
+
+Resultado da última execução (`Results: 2 passed (100%), 0 failed, 0 errors`):
+
+| Modelo | Resultado | Latência | Custo (US$) | Linhas da saída |
+|---|---|---|---|---|
+| gpt-6-sol | PASS | 20315 ms | 0,0285 | 172 |
+| claude-sonnet-5-5 | PASS | 35190 ms | 0,0709 | 221 |
+
+Histórico das execuções até chegar a esse resultado:
+
+| Execução | Configuração | Resultado | Falhas |
+|---|---|---|---|
+| 1 | limites do enunciado (5 s e US$ 0,01), Sonnet com raciocínio adaptativo, assert `not-contains: '- {}'` sobre a saída inteira | 0/2 | latência e custo nos dois (GPT: 35,6 s e US$ 0,059; Sonnet: 95,2 s e US$ 0,158); no Sonnet, também o `- {}`, que é falso positivo (a tabela de análise cita o manifesto original) |
+| 2 | Sonnet com `between_tools`, GPT com `reasoning_effort: low`, `- {}` verificado só no bloco yaml | 0/2 | só latência e custo (GPT: 19,8 s e US$ 0,039; Sonnet: 32,4 s e US$ 0,067) |
+| 3 | limites próprios de 60 s e US$ 0,10 | 2/2 | nenhuma |
+
 ## Curadoria
 
 **Técnica:** prompt de geração único, sem few-shot, seguido de verificação e refino conduzidos como turnos de conversa, fora do `prompt.md`. Os blocos do prompt mapeiam assim: `<contexto>` fixa a semântica da API `networking.k8s.io/v1` (aditividade, E/OU dos seletores, regra sem `ports`, `ipBlock`, CNI) para que o modelo não dependa de memória sobre elas; o passo 2 do `<metodo>` lista o que verificar no manifesto original; o passo 3 limita os fluxos legítimos ao que o mapa declara; o passo 5 projeta a política (default-deny e uma política de liberação por fluxo); o passo 6 trata dependências de infraestrutura; o passo 7 compara original e corrigido; `<regras>` impõe a rotulagem (fato, premissa, julgamento) e a não invenção; `<verificacao_final>` repassa a saída contra o mapa, o padrão e a semântica da API. Exemplos de manifesto completo ancorariam o modelo em uma forma específica e prejudicariam o reuso.
@@ -874,3 +917,16 @@ Para compensar o texto acrescentado, foram cortadas a recomendação "não desab
 **Processo de verificação:** a autoverificação (v2) confirmou a v1 em vez de questioná-la. O revisor aplicou a mesma regra de não invenção que causara o problema, classificou o bloqueio de todos os fluxos como parcial e emitiu parecer favorável ao manifesto-base. A falha central só foi vista na conferência humana e corrigida na v3 por direção explícita (protocolo como premissa e ingress sem porta com lacuna sinalizada). O prompt corrigido, em chat novo e sem direção, reproduziu a v3. A lição é que o modelo verifica a saída contra as regras que recebeu, e uma regra excessiva passa pela autoverificação.
 
 **Modelo:** GPT 6 Sol com esforço de raciocínio médio. Na execução de validação, produziu seis recursos corretos (default-deny, dois ingress com origem restrita e sem `ports`, três egress com portas e protocolos), manteve `namespaceSelector` e `podSelector` no mesmo item, registrou a direção do Relay, decompôs o padrão em oito regras, separou as dependências de infraestrutura em lacunas individuais e entregou a tabela original × corrigido. Os pontos fracos foram o ingress sem restrição de porta (risco residual documentado em L-01 e L-02), os comentários de ingress sem o risco rotulado, as seções com subtítulos extras e os comandos de validação não executados.
+
+**Curadoria dos testes (CP08):**
+
+- **O que passou desde a primeira execução:** todos os asserts de conteúdo, nos dois provedores: `kind: NetworkPolicy`, `policyTypes` com `Ingress` e `Egress`, `5432`, `9200`, `app: relay` e comentário `#` acima de cada regra de ingress e de egress. O prompt não precisou de alteração.
+- **O que falhou e por quê:**
+  - *`- {}` no Sonnet.* Falso positivo do teste. O assert original procurava `- {}` na saída inteira, e a tabela de análise da seção 1 cita o manifesto original (`spec.ingress[0]` e `spec.egress[0]`, ambos `- {}`). O manifesto corrigido não tinha regra allow-all.
+  - *Latência e custo, nos dois provedores.* A saída tem 172 a 221 linhas: análise, inventário, YAML com 4 a 6 recursos NetworkPolicy conforme o modelo, rastreabilidade, lacunas e validação. Isso não cabe em 5 s e US$ 0,01 (primeira execução: GPT 35,6 s e US$ 0,059; Sonnet 95,2 s e US$ 0,158).
+- **O que foi ajustado nos testes (configuração):**
+  - O assert do `- {}` passou a olhar só as linhas do bloco yaml corrigido (a saída tem um único bloco yaml). Ele continua reprovando um `- {}` que aparecesse no manifesto gerado, inclusive com comentário na mesma linha.
+  - O Sonnet passou a `thinking.type: between_tools`, e o GPT a `reasoning_effort: low`. Isso reduziu a latência e o custo em cerca de 34% a 66% (GPT: 35,6 para 19,8 s e US$ 0,059 para US$ 0,039; Sonnet: 95,2 para 32,4 s e US$ 0,158 para US$ 0,067), mas sem chegar perto de 5 s e US$ 0,01.
+  - Os limites foram elevados para **60 s e US$ 0,10** neste prompt. A saída longa é o que o prompt entrega por definição (análise, manifestos, rastreabilidade, lacunas e validação), e cortá-la para caber nos limites tiraria justamente o conteúdo que o CP06 exige. Foi a opção de menor perda, e os limites do enunciado continuam registrados acima como medição de referência. O uso previsto é uma revisão de segurança, e não uma resposta de plantão.
+- **Trade-off de modelo:** o GPT 6 Sol é mais rápido e mais barato neste prompt (cerca de 20 s e US$ 0,03, contra 35 s e US$ 0,07 do Sonnet 5.5). Nenhum dos dois se aproxima do orçamento do enunciado, e o custo e a latência são do tamanho da saída, não de uma escolha de modelo.
+- **Limitações dos testes:** os asserts verificam a presença de elementos e a estrutura do YAML por texto e expressão regular. Eles não validam o manifesto contra o servidor de API do Kubernetes nem o isolamento efetivo (`kubectl apply --dry-run=server`), e não avaliam se as lacunas e premissas estão corretas. O teste usa um único manifesto de entrada, e a variação entre execuções não foi medida em série.

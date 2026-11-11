@@ -218,6 +218,55 @@ Nenhum pod problemático no snapshot.
 Observação de acompanhamento: Fato: `sentinel-worker-5b8f9c8d-jq7rs` apresenta `1 (3d ago)` em RESTARTS e `6d` em AGE (get_pods), estando `1/1 Running`. Inferência: restart antigo, sem recorrência registrada no snapshot; apenas acompanhamento.
 ```
 
+### Testes determinísticos (promptfoo)
+
+As três entradas acima (snapshots do CP01) rodam como casos de teste em [`promptfooconfig.yaml`](promptfooconfig.yaml), contra dois provedores. Comando, a partir desta pasta:
+
+```powershell
+promptfoo eval -c promptfooconfig.yaml --no-cache --output resultado.json
+```
+
+| Item | Valor |
+|---|---|
+| Versão do promptfoo | 0.125.1 |
+| Provedor 1 | OpenAI `gpt-6-sol`, `reasoning_effort: low` |
+| Provedor 2 | Anthropic `claude-sonnet-5-5`, `thinking.type: between_tools`, `max_tokens: 2048` |
+| Prompt testado | `prompt.md` v1.0.0 (arquivo inteiro, com frontmatter) |
+
+Asserts por entrada:
+
+| Entrada | Tipo | Critério |
+|---|---|---|
+| 1 | `contains` | `sentinel-api-7d9c8b6f4-h4m2t` |
+| 1 | `icontains-any` | `OOMKilled` ou `memória` |
+| 2 | `contains-all` | `sentinel-api-7d9c8b6f4-zzp10` e `sentinel-ingest-8f7a9c5b-4dkqm` |
+| 2 | `icontains-any` | `2.9.2` ou `ImagePullBackOff` (causa do pod com imagem) |
+| 2 | `icontains-any` | `cpu` ou `Insufficient` (causa do pod pendente) |
+| 3 | `contains` | `Nenhum pod problemático no snapshot.` |
+| 3 | `not-contains` | `###` (nenhum pod com seção de falha) |
+| 3 | `not-icontains-any` | `CrashLoopBackOff`, `OOMKilled`, `ImagePullBackOff`, `Pending`, `Error` |
+| todas | `latency` | até **10000 ms** por chamada (limite próprio; enunciado: 5000 ms) |
+| todas | `cost` | até **US$ 0,02** por chamada (limite próprio; enunciado: US$ 0,01) |
+
+Resultado da última execução (`Results: 6 passed (100%), 0 failed, 0 errors`):
+
+| Entrada | Modelo | Resultado | Latência | Custo (US$) | Linhas da saída |
+|---|---|---|---|---|---|
+| 1 | gpt-6-sol | PASS | 4539 ms | 0,0042 | 10 |
+| 1 | claude-sonnet-5-5 | PASS | 5599 ms | 0,0124 | 12 |
+| 2 | gpt-6-sol | PASS | 3271 ms | 0,0033 | 13 |
+| 2 | claude-sonnet-5-5 | PASS | 9265 ms | 0,0179 | 23 |
+| 3 | gpt-6-sol | PASS | 2399 ms | 0,0015 | 5 |
+| 3 | claude-sonnet-5-5 | PASS | 1391 ms | 0,0056 | 5 |
+
+Histórico das execuções até chegar a esse resultado:
+
+| Execução | Configuração | Resultado | Falhas |
+|---|---|---|---|
+| 1 | limites do enunciado (5 s e US$ 0,01), Sonnet com raciocínio adaptativo | 2/6 | latência e custo nas Entradas 1 e 2 nos dois modelos (GPT: 8,4 a 9,4 s e US$ 0,012 a 0,013; Sonnet: 16 s e US$ 0,025); na Entrada 2 do Sonnet a saída veio vazia, e os três asserts de conteúdo falharam |
+| 2 | Sonnet com `between_tools`, GPT com `reasoning_effort: low` | 4/6 | só o Sonnet nas Entradas 1 e 2: custo (US$ 0,014 e 0,016) e latência (6,5 e 7,9 s) |
+| 3 | limites próprios de 10 s e US$ 0,02 | 6/6 | nenhuma |
+
 ## Curadoria
 
 **Framework:** RISE (Role, Input, Steps, Expectation), por combinar passos em ordem com uma saída de formato definido e verificável. O prompt tem os quatro blocos: `<papel>` (Role), `<snapshot>` (Input), `<passos>` (Steps) e `<formato_de_saida>` (Expectation).
@@ -225,3 +274,16 @@ Observação de acompanhamento: Fato: `sentinel-worker-5b8f9c8d-jq7rs` apresenta
 **Refinos:** o prompt foi criado por meta-prompting (Opus 5.5) e refinado com revisão humana para alinhar o frontmatter ao template, exigir o nome completo do pod no cabeçalho, mostrar a evidência por fonte (confiança "alta" só com duas fontes convergentes) e deixar a saída curta e consistente, inclusive no caso sem pod problemático.
 
 **Modelo:** GPT 6 Luna, descrito pelo provedor como o mais eficiente da família para tarefas focadas e de alto volume, o que corresponde a esta triagem (entrada estruturada, saída curta e formato fixo). Atendeu aos critérios das três entradas.
+
+**Curadoria dos testes (CP08):**
+
+- **O que passou desde a primeira execução:** a Entrada 3 (tudo saudável) nos dois provedores, e todos os asserts de conteúdo do GPT 6 Sol nas Entradas 1 e 2. O prompt não precisou de alteração: a versão testada é a v1.0.0.
+- **O que falhou e por quê:**
+  - *Saída vazia do Sonnet na Entrada 2.* O raciocínio adaptativo consumiu todo o `max_tokens: 2048` (`finishReason: length`), e os asserts de conteúdo falharam sem que o prompt tivesse culpa. Foi falha de configuração do teste.
+  - *Latência e custo nas Entradas 1 e 2.* Com os limites do enunciado (5 s e US$ 0,01), a saída de 10 a 23 linhas não cabia no orçamento: GPT com 8,4 a 9,4 s e US$ 0,012 a 0,013; Sonnet com 16 s e US$ 0,025.
+- **O que foi ajustado nos testes (configuração):**
+  - O Sonnet 5.5 passou a usar `thinking.type: between_tools` (o `disabled` não é aceito pelo modelo), o que eliminou a saída vazia e baixou o custo e a latência.
+  - O GPT 6 Sol passou a `reasoning_effort: low`.
+  - Os limites de latência e custo deste prompt foram elevados para **10 s e US$ 0,02**, em vez dos 5 s e US$ 0,01 do enunciado. Mesmo com raciocínio mínimo, o Sonnet continuou acima: Entrada 1 com 5,6 a 6,5 s e US$ 0,012 a 0,014, e Entrada 2 com 7,9 a 9,3 s e US$ 0,016 a 0,018, porque a saída tem 12 a 23 linhas e traz fatos, inferência, causa e próxima ação por pod. O enunciado trata 5 s e US$ 0,01 como parte da qualidade, e a decisão aqui foi não cortar o conteúdo exigido da triagem para caber no orçamento. Os limites próprios têm margem de 7% (latência) e 11% (custo) sobre o pior caso medido.
+- **Trade-off de modelo:** o GPT 6 Sol cumpre os limites do enunciado em todas as entradas desta última execução (até 4,5 s e US$ 0,004) e é a escolha para o uso rotineiro. O Sonnet 5.5 só cumpre os limites próprios, e sua latência na Entrada 2 (9,3 s) está a menos de 1 s do limite de 10 s. Uma rodada mais lenta pode reprová-lo sem que o prompt tenha mudado.
+- **Limitações dos testes:** os asserts checam a presença de pods e causas, e não a qualidade do diagnóstico, que fica para a avaliação por julgamento do CP09. O `not-icontains-any` da Entrada 3 inclui a palavra `Error`, o que reprovaria uma saída que a citasse mesmo em contexto correto (isso não ocorreu). A variação entre execuções não foi medida em série; entre rodadas, a latência do Sonnet na Entrada 2 foi de 7,9 s a 9,3 s.

@@ -1,0 +1,122 @@
+description: Endurecimento de NetworkPolicy - testes determinísticos (CP08)
+
+# Caminhos relativos a esta pasta. Executar a partir dela:
+#   promptfoo eval -c promptfooconfig.yaml
+prompts:
+  - file://prompt.md
+
+providers:
+  - id: openai:gpt-6-sol
+    label: openai-gpt-6-sol
+    config:
+      reasoning_effort: low
+  - id: anthropic:messages:claude-sonnet-5-5
+    label: anthropic-sonnet-5-5
+    config:
+      max_tokens: 16000
+      thinking:
+        type: between_tools
+
+defaultTest:
+  assert:
+    # YAML corrigido: NetworkPolicy com Ingress e Egress em policyTypes
+    - type: contains
+      value: 'kind: NetworkPolicy'
+    - type: javascript
+      value: |
+        const m = output.match(/```ya?ml\n([\s\S]*?)```/);
+        if (!m) return { pass: false, score: 0, reason: 'bloco yaml não encontrado' };
+        const docs = m[1].split(/^---\s*$/m);
+        const tipos = new Set();
+        for (const d of docs) {
+          const t = d.match(/policyTypes:\s*\n((?:\s*(?:#.*)?\n|\s*-\s*\w+.*\n?)+)/);
+          if (t) for (const x of t[1].matchAll(/-\s*(Ingress|Egress)/g)) tipos.add(x[1]);
+        }
+        const ok = tipos.has('Ingress') && tipos.has('Egress');
+        return { pass: ok, score: ok ? 1 : 0, reason: 'policyTypes encontrados: ' + [...tipos].join(',') };
+    # Nenhuma regra "allow all" no YAML corrigido (a tabela de análise cita o
+    # manifesto original, que tem "- {}", e não deve ser avaliada)
+    - type: javascript
+      value: |
+        const m = output.match(/```ya?ml\n([\s\S]*?)```/);
+        if (!m) return { pass: false, score: 0, reason: 'bloco yaml não encontrado' };
+        const achou = m[1].split('\n').filter(l => /^\s*-\s*\{\s*\}\s*(#.*)?$/.test(l));
+        return { pass: achou.length === 0, score: achou.length === 0 ? 1 : 0,
+                 reason: achou.length ? 'regra allow-all no yaml corrigido: ' + achou.join(' | ') : 'sem "- {}" no yaml corrigido' };
+    # Egress para Forge (5432) e Cerebro (9200)
+    - type: contains-all
+      value:
+        - '5432'
+        - '9200'
+    # Ingress do Relay
+    - type: contains
+      value: 'app: relay'
+    # Toda regra de ingress/egress tem comentário # logo acima
+    - type: javascript
+      value: |
+        const m = output.match(/```ya?ml\n([\s\S]*?)```/);
+        if (!m) return { pass: false, score: 0, reason: 'bloco yaml não encontrado' };
+        const lines = m[1].split('\n');
+        const faltando = [];
+        for (let i = 0; i < lines.length; i++) {
+          if (!/^\s*(ingress|egress):\s*$/.test(lines[i])) continue;
+          const base = lines[i].match(/^\s*/)[0].length;
+          let ruleIndent = null;
+          let prev = lines[i];
+          for (let j = i + 1; j < lines.length; j++) {
+            const l = lines[j];
+            if (!l.trim()) continue;
+            const ind = l.match(/^\s*/)[0].length;
+            if (ind <= base && !l.trim().startsWith('#')) break;
+            if (l.trim().startsWith('#')) { prev = l; continue; }
+            if (l.trim().startsWith('- ') && (ruleIndent === null || ind === ruleIndent)) {
+              ruleIndent = ind;
+              if (!prev.trim().startsWith('#')) faltando.push('linha ' + (j + 1) + ': ' + l.trim());
+              prev = l;
+            }
+          }
+        }
+        return { pass: faltando.length === 0, score: faltando.length === 0 ? 1 : 0,
+                 reason: faltando.length ? 'regras sem comentário: ' + faltando.join(' | ') : 'todas as regras comentadas' };
+    # Limite próprio (enunciado: 5 s): saída estruturada longa; ver Curadoria no README
+    - type: latency
+      threshold: 60000
+    # Limite próprio (enunciado: US$ 0,01); ver Curadoria no README
+    - type: cost
+      threshold: 0.10
+
+tests:
+  - description: Manifesto permissivo (allow all) com padrão e mapa do Sentinel
+    vars:
+      manifesto: |
+        # manifesto barrado pela revisão de segurança — permissivo demais
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: sentinel-allow
+          namespace: sentinel-prod
+        spec:
+          podSelector: {}          # aplica a todos os pods do namespace
+          policyTypes:
+            - Ingress
+            - Egress
+          ingress:
+            - {}                   # libera QUALQUER origem
+          egress:
+            - {}                   # libera QUALQUER destino
+      padrao: |
+        NetworkPolicy para o namespace "sentinel-prod":
+        - pods do Sentinel só aceitam tráfego de entrada do Relay (consumo de
+          eventos) e do gateway de API da plataforma
+        - pods do Sentinel só fazem saída para: Forge (warehouse, porta 5432),
+          Cerebro (busca, porta 9200) e DNS interno
+        - nada de "allow all" em ingress ou egress
+        - política default-deny explícita no namespace
+        - toda regra precisa de comentário dizendo qual fluxo legítimo ela libera
+      mapa_de_servicos: |
+        Sentinel     → namespace sentinel-prod, pods com label app=sentinel
+        Relay        → namespace relay-prod,    pods com label app=relay
+        API gateway  → namespace edge,          pods com label app=api-gateway
+        Forge        → namespace forge-prod,    pods com label app=forge,   porta 5432 (Postgres do warehouse)
+        Cerebro      → namespace cerebro-prod,  pods com label app=cerebro, porta 9200 (Elasticsearch)
+        DNS interno  → namespace kube-system,   pods com label k8s-app=kube-dns, porta 53
