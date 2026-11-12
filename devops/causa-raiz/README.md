@@ -46,6 +46,7 @@ Exemplos de execução com saída real estão na seção [Execução](#execuçã
 - O limite de cerca de 900 palavras é uma orientação ao modelo. Não foi medido o tamanho das saídas abaixo.
 - O escopo é Elasticsearch sobre JVM. Para outros motores de busca ou indexação, o método vale, mas o papel e as heurísticas do prompt podem precisar de ajuste.
 - Os resultados abaixo vêm de duas execuções com um único modelo.
+- O gate (seção "Gate de qualidade com LLM-as-judge") usa um juiz LLM não determinístico, calibrado com cinco amostras, três delas sintéticas. As saídas reais do prompt ficam perto do corte de 6, então uma execução pode reprovar por flutuação do juiz ou do prompt.
 
 ## Execução
 
@@ -308,6 +309,83 @@ Coletas prioritárias: métricas de disco e merges por nó e shard, histórico c
 Conclusão: a sobrecarga de escrita concorrente ao `reindex` é a hipótese principal, mas distinguir entre excesso de demanda, limitação de I/O e pressão primária de memória exige essas evidências adicionais.
 ```
 
+### Gate de qualidade com LLM-as-judge (CP09)
+
+A análise de causa-raiz não tem resposta única verificável por regex, então a qualidade é avaliada por um juiz LLM que aplica uma rubrica de quatro critérios. O juiz é o gate: reprova a saída quando a nota total fica abaixo do corte. Arquivos desta pasta:
+
+| Arquivo | Função |
+|---|---|
+| [`promptfooconfig.yaml`](promptfooconfig.yaml) | gate: executa o prompt em dois provedores e submete cada saída ao juiz |
+| [`juiz/rubrica.txt`](juiz/rubrica.txt) | rubrica e instruções do juiz (texto completo) |
+| [`dados/pacote-cerebro.txt`](dados/pacote-cerebro.txt) | pacote de artefatos usado como entrada (o mesmo da seção anterior) |
+| [`calibracao/`](calibracao) | config, amostras e pontuação humana usados para calibrar o juiz |
+
+**Rubrica.** Quatro critérios, cada um de 0 a 2 (0 = não atende, 1 = parcial, 2 = atende), total de 0 a 8. **Aprovação: total ≥ 6 e nenhum critério igual a 0.**
+
+| Critério | 2 (atende) | 1 (parcial) | 0 (não atende) |
+|---|---|---|---|
+| C1. Causa-raiz correta | aponta o reindex travado ou prolongado (progresso incompatível com a duração configurada) como origem provável e o liga à saturação de heap, circuit breaker e timeouts; hipótese principal com confiança declarada conta como 2 | cita reindex ou heap sem priorizar o reindex como origem, ou acerta o mecanismo de memória sem apontar a origem | só sintomas, ou aponta como causa algo que é consequência (cache, fila, timeouts) |
+| C2. Correlação × causa | separa causa, mecanismo intermediário e consequência, trata cache, rejeições, circuit breaker e timeouts como efeitos e distingue precedência de causalidade | separa parte dos fenômenos, mas mistura ao menos um efeito com causa | trata sintoma como causa-raiz ou não separa |
+| C3. Ação proporcional | ações coerentes com o diagnóstico, com risco e reversibilidade, sem ação destrutiva como primeira medida, sem valores novos sem base e sem redesenho | em geral coerentes, mas genéricas ou sem risco ou reversibilidade | só "monitorar", ação destrutiva, redesenho de arquitetura ou valores inventados |
+| C4. Honestidade epistêmica | confiança coerente, marcação de observado, inferido e hipótese, contradições e lacunas registradas, lista do que coletar | reconhece alguns limites, com confiança incoerente ou lacunas principais ausentes | certeza que os dados não permitem, dados inventados ou nenhum limite reconhecido |
+
+A rubrica completa leva também o gabarito do cenário (o reindex 88123 avançou de 38% para 41% em cerca de 2 h, aproximadamente 43 docs/s, contra 90 min esperados), que o juiz usa como referência.
+
+**Configuração do gate.**
+
+| Item | Valor |
+|---|---|
+| Versão do promptfoo | 0.125.1 |
+| Prompt testado | `prompt.md` v1.0.0 (arquivo inteiro, com frontmatter) |
+| Provedor 1 | OpenAI `gpt-6-sol`, `reasoning_effort: medium` |
+| Provedor 2 | Anthropic `claude-sonnet-5-5`, `thinking.type: between_tools`, `max_tokens: 16000` |
+| Juiz | Anthropic `claude-sonnet-5-5`, `thinking.type: between_tools`, `max_tokens: 8000`, o mesmo para os dois provedores |
+| Assert | um `llm-rubric` com `threshold: 0.75` (equivale ao corte total ≥ 6) |
+
+Comando, a partir desta pasta:
+
+```powershell
+promptfoo eval -c promptfooconfig.yaml --no-cache --output resultado.json
+```
+
+O juiz faz uma única chamada por saída e devolve JSON com `score = total/8` e `pass = (total ≥ 6 e nenhum critério igual a 0)`. A nota de cada critério vem no campo `reason` (`C1=…; C2=…; C3=…; C4=…; total=…`). Com `threshold` definido, o promptfoo exige que `pass` seja verdadeiro e `score ≥ 0.75`, e a regra "nenhum critério zerado" fica dentro do `pass`.
+
+**Calibração do juiz.** Antes de usar o juiz como gate, pontuei cinco saídas à mão, critério por critério, **antes de ver as notas do juiz**, e comparei com as notas dele. A meta do enunciado: no máximo 1 ponto de diferença em cada critério.
+
+| Amostra | Origem |
+|---|---|
+| s1, s2 | rodadas reais do GPT 6 Sol, mostradas na seção Execução acima |
+| s3 | sintética: trata a queda do cache como causa-raiz, com certeza fabricada e reinício do cluster como primeira ação |
+| s4 | sintética: aponta o reindex travado, mas propõe apagar o índice, reiniciar todos os nós e redesenhar a arquitetura |
+| s5 | sintética: análise vaga, tudo "indeterminado" e só "monitorar" |
+
+Pontuação humana contra a do juiz (C1 · C2 · C3 · C4 = total). As duas rodadas do juiz deram notas idênticas.
+
+| Amostra | Humano | Juiz | Diferença por critério | Veredicto humano | Veredicto do juiz |
+|---|---|---|---|---|---|
+| s1 | 1 · 1 · 2 · 2 = 6 | 1 · 2 · 1 · 2 = 6 | 0 · 1 · 1 · 0 | aprovada | aprovada |
+| s2 | 2 · 1 · 1 · 2 = 6 | 1 · 2 · 2 · 2 = 7 | 1 · 1 · 1 · 0 | aprovada | aprovada |
+| s3 | 0 · 0 · 0 · 0 = 0 | 0 · 1 · 0 · 0 = 1 | 0 · 1 · 0 · 0 | reprovada | reprovada |
+| s4 | 2 · 2 · 0 · 1 = 5 | 2 · 2 · 0 · 2 = 6 | 0 · 0 · 0 · 1 | reprovada (C3 = 0) | reprovada (C3 = 0) |
+| s5 | 0 · 0 · 0 · 1 = 1 | 0 · 0 · 0 · 1 = 1 | 0 · 0 · 0 · 0 | reprovada | reprovada |
+
+Resultado: as 20 diferenças ficaram entre 0 e 1 e os 5 veredictos coincidem, sem ajuste na rubrica. As notas humanas e os motivos estão em [`calibracao/humano.yaml`](calibracao/humano.yaml).
+
+**Execução do gate** (`Results: 2 passed (100%), 0 failed, 0 errors`):
+
+| Modelo | Resultado | Nota do juiz (C1 · C2 · C3 · C4 = total) | Latência | Custo da geração (US$) | Palavras |
+|---|---|---|---|---|---|
+| gpt-6-sol | PASS (score 0,875) | 1 · 2 · 2 · 2 = 7 | 20,1 s | 0,0295 | 944 |
+| claude-sonnet-5-5 | PASS (score 1,0) | 2 · 2 · 2 · 2 = 8 | 27,0 s | 0,0498 | 1250 |
+
+A contagem de palavras divide a saída por espaços e inclui as tabelas. O custo não inclui as chamadas do juiz.
+
+Justificativa do juiz, trechos do `resultado.json` com a acentuação restaurada (o arquivo gravou parte dos acentos corrompidos):
+
+- **GPT 6 Sol, C1 = 1:** a origem é declarada "não demonstrada/indeterminada" e a hipótese principal é contenção na escrita de segmentos, com o reindex apenas como possível agravante, em vez de ser priorizado como origem provável, embora o mecanismo de heap, GC, circuit breaker e timeouts esteja corretamente descrito.
+- **GPT 6 Sol, C2 a C4 = 2:** a tabela e a cadeia causal separam origem, mecanismo e consequência e dizem que precedência não demonstra causalidade; as ações trazem risco, reversibilidade e aprovação humana, sem valores inventados; a confiança baixa é justificada, com as lacunas reconhecidas (nó único, métricas de 30 min, sem I/O, sem configuração efetiva) e a lista do que coletar.
+- **Sonnet 5.5, C1 = 2:** identifica o reindex task [88123], ainda ativo muito além dos cerca de 90 min esperados, como hipótese principal, nota o progresso incompatível (38% para 41%, cerca de 43 docs/s) e o liga ao mecanismo de saturação de heap, throttling, fila de escrita, circuit breaker e timeouts, com confiança média declarada.
+
 ## Curadoria
 
 **Framework:** raciocínio estruturado por hipóteses concorrentes, sem few-shot. O objetivo é chegar à causa-raiz cruzando três fontes, e exemplos de análise completa ancorariam o modelo em uma causa específica e prejudicariam o reuso. Os blocos do prompt mapeiam assim: `<metodo>` define as etapas de análise (coerência entre fontes, linha do tempo, primeiro desvio, hipóteses concorrentes, classificação, critério de causa-raiz e confiança); `<regras>` cobre rastreabilidade, proporcionalidade das ações, segurança da entrada e entrada insuficiente; `<formato_saida>` fixa as sete seções.
@@ -315,3 +393,13 @@ Conclusão: a sobrecarga de escrita concorrente ao `reindex` é a hipótese prin
 **Refinos:** o prompt foi criado por meta-prompting com o Opus 5.5 e refinado com revisão humana. O limite de palavras subiu de 700 para 900, por ser incompatível com os campos exigidos em cada ação, e a exceção da resposta de entrada insuficiente foi explicitada no formato de saída. Três execuções com um único artefato cada, que não constam como entrega, mostraram que nenhuma fonte isolada fecha a análise. A primeira execução com o pacote completo não derivou a taxa de progresso do reindex, e por isso a etapa de coerência entre fontes passou a pedir a taxa implícita de contadores acumulados e sua comparação com a configuração e com as demais métricas. Não foi aplicado novo ajuste para induzir uma causa específica, para manter o prompt reutilizável em outras degradações.
 
 **Modelo:** GPT 6 Sol com esforço de raciocínio médio. Nas duas rodadas seguiu as sete seções, citou a fonte de cada valor, classificou o cache, o circuit breaker e as rejeições como mecanismo ou consequência, e registrou a divergência entre o reindex e a vazão de indexação. A conclusão sobre o reindex variou entre as rodadas, e a confiança foi média em ambas.
+
+**Curadoria do gate (CP09):**
+
+- **Desenho do juiz:** a primeira ideia foi uma asserção `llm-rubric` por critério, agrupadas em `assert-set` com limiar 0,75 (equivalente a total ≥ 6). Testei o `assert-set` com o provedor `echo` e as notas 0, 2, 2 e 2 passaram: o conjunto mede só a média e não aplica "nenhum critério zerado". Para manter a regra sem duplicar chamadas ao juiz, usei uma única chamada que devolve o total e o `pass` já com a regra.
+- **Calibração:** pontuei as cinco amostras antes de rodar o juiz. A s1 foi revista de 2 · 2 · 2 · 2 para 1 · 1 · 2 · 2 ao reler as âncoras de C1 e C2, ainda antes de ver qualquer nota do juiz. O juiz ficou a no máximo 1 ponto em todos os critérios e acertou os cinco veredictos nas duas rodadas, com notas idênticas, então a rubrica não precisou de ajuste.
+- **Onde o juiz diverge:** nas duas saídas reais (s1 e s2) ele deu 2 em C2, onde dei 1, por aceitar o cache como "mecanismo intermediário" quando o texto diz que a causalidade não está comprovada; em C3 ele foi mais severo na s1 (ações "hedgeadas") e mais brando na s2 (não penalizou o "risco depende da intervenção"); e em C1 deu 1 na s2, onde dei 2. As diferenças se compensam em parte no total (s1 igual, s2 com 1 ponto a mais), mas essas duas amostras estão no corte e é onde um desvio de 1 ponto muda o veredicto.
+- **Problema de execução corrigido:** a primeira execução da calibração deu erro nos cinco testes, sem chamar o juiz, porque o `file://` de asserções do promptfoo não aceita `.md`. A rubrica passou a `juiz/rubrica.txt`.
+- **O que o gate mostrou:** o prompt v1.0.0 passou nos dois provedores (7 e 8 de 8), sem alteração do prompt. O GPT ficou com C1 = 1 porque priorizou a escrita de segmentos, e o reindex ficou como agravante.
+- **Limites:** cinco amostras, três delas escritas por mim; as duas reais vêm do mesmo prompt e do mesmo modelo. O juiz é o Sonnet 5.5 e também avaliou a saída do Sonnet, o que pode favorecer a si mesmo; com uma execução de cada, a nota 8 contra 7 não permite concluir isso. A rubrica não mede tamanho (o Sonnet passou de 1200 palavras contra o limite de cerca de 900 do prompt) nem rastreabilidade (o Sonnet citou "Tasks API" e `requests_per_second`, que não constam dos artefatos).
+- **Próximo passo (CP10):** as saídas reais ficam perto do corte, então o pipeline precisa decidir como tratar a flutuação do juiz (limiar, repetição ou só asserts determinísticos como bloqueio) e pode somar asserts de tamanho e de rastreabilidade ao gate.

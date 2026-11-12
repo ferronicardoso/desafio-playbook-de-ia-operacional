@@ -1,0 +1,43 @@
+description: Causa-raiz - calibração do juiz contra a pontuação humana (CP09)
+
+# Aplica o MESMO juiz do gate (juiz/rubrica.txt) a saídas já escritas, sem chamar
+# o prompt de causa-raiz. O provedor "echo" devolve a amostra como saída.
+# Executar a partir desta pasta:
+#   promptfoo eval -c promptfooconfig.yaml --no-cache --output resultado.json
+prompts:
+  - "{{saida}}"
+
+providers:
+  - echo
+
+defaultTest:
+  options:
+    provider:
+      id: anthropic:messages:claude-sonnet-5-5
+      label: juiz-sonnet-5-5
+      config:
+        max_tokens: 8000
+        thinking:
+          type: between_tools
+  assert:
+    - type: llm-rubric
+      value: file://../juiz/rubrica.txt
+      threshold: 0.75
+      metric: qualidade-causa-raiz
+
+tests:
+  - description: s1 - rodada 1 do README (GPT 6 Sol, real)
+    vars:
+      saida: file://amostras/s1-rodada1-gpt6sol.md
+  - description: s2 - rodada 2 do README (GPT 6 Sol, real)
+    vars:
+      saida: file://amostras/s2-rodada2-gpt6sol.md
+  - description: s3 - sintética - sintomas como causa, certeza fabricada
+    vars:
+      saida: file://amostras/s3-sintetica-causa-errada.md
+  - description: s4 - sintética - causa certa, ação desproporcional e destrutiva
+    vars:
+      saida: file://amostras/s4-sintetica-acao-desproporcional.md
+  - description: s5 - sintética - análise vaga, só monitorar
+    vars:
+      saida: file://amostras/s5-sintetica-vaga.md

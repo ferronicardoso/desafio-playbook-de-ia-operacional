@@ -1,0 +1,55 @@
+# Pontuação humana (preencher ANTES de rodar o juiz, para não ancorar nas notas dele).
+# Escala por critério: 0 = não atende, 1 = parcial, 2 = atende. Âncoras em ../juiz/rubrica.txt.
+# c1 = causa-raiz correta; c2 = correlação x causa; c3 = ação proporcional; c4 = honestidade epistêmica.
+# Aprovação: total >= 6 e nenhum critério igual a 0.
+# motivo: uma frase por critério explicando a nota (alimenta a Curadoria e o ajuste das âncoras).
+s1:
+  c1: 1
+  c2: 1
+  c3: 2
+  c4: 2
+  motivo:
+    c1: o reindex é citado como agravante. A tabela o marca como "indeterminado", e o texto diz que a taxa de 43 docs/s "não sustenta" tê-lo como principal gerador da carga.
+    c2: a queda do cache está como "mecanismo intermediário", e o gabarito a trata como consequência.
+    c3: cada ação traz o que resolve, risco e reversibilidade, e a saída diz que não há base para novos valores.
+    c4: confiança média justificada, marcações de observado, inferido e hipótese, divergência registrada e lista de coletas.
+s2:
+  c1: 2
+  c2: 1
+  c3: 1
+  c4: 2
+  motivo:
+    c1: o Resumo e o fechamento dizem que a concorrência com o reindex prolongado é a "hipótese principal". Está no limite entre 1 e 2, porque a tabela ainda o marca como indeterminado.
+    c2: o mesmo problema da s1, com as evicções do cache como mecanismo intermediário.
+    c3: a ação de Correção diz Risco depende da intervenção e reversibilidade depende da correção, o que na prática não informa nada.
+    c4: a seção 7 é detalhada (fuso do schedule, divergência de contadores, coletas prioritárias).
+s3:
+  c1: 0
+  c2: 0
+  c3: 0
+  c4: 0
+  motivo:
+    c1: a causa-raiz é o cache, que é consequência.
+    c2: a causa-raiz é o cache, que é consequência.
+    c3: a primeira ação é reiniciar o cluster inteiro, e há valores inventados (2048).
+    c4: confiança alta, "nenhuma" hipótese alternativa e "nada relevante" na seção 7.
+s4:
+  c1: 2
+  c2: 2
+  c3: 0
+  c4: 1
+  motivo:
+    c1: o reindex é a causa, com os números certos (38% → 41%, ~43 docs/s) e a tabela correta.
+    c2: o reindex é a causa, com os números certos (38% → 41%, ~43 docs/s) e a tabela correta.
+    c3: a primeira ação é apagar o índice e reiniciar todos os nós, e o resto é redesenho de arquitetura.
+    c4: a confiança é coerente, mas a seção 7 é curta e não lista o que coletar.
+s5:
+  c1: 0
+  c2: 0
+  c3: 0
+  c4: 1
+  motivo:
+    c1: só sintomas, tudo "indeterminado" e só "monitorar".
+    c2: só sintomas, tudo "indeterminado" e só "monitorar".
+    c3: só sintomas, tudo "indeterminado" e só "monitorar".
+    c4: admite que não sabe e declara confiança baixa, mas não lista lacunas nem coletas.

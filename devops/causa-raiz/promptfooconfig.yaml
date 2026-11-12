@@ -1,0 +1,43 @@
+description: Causa-raiz de degradação - gate de qualidade com LLM-as-judge (CP09)
+
+# Caminhos relativos a esta pasta. Executar a partir dela:
+#   promptfoo eval -c promptfooconfig.yaml --no-cache --output resultado.json
+prompts:
+  - file://prompt.md
+
+providers:
+  - id: openai:gpt-6-sol
+    label: openai-gpt-6-sol
+    config:
+      reasoning_effort: medium
+  - id: anthropic:messages:claude-sonnet-5-5
+    label: anthropic-sonnet-5-5
+    config:
+      max_tokens: 16000
+      thinking:
+        type: between_tools
+
+defaultTest:
+  options:
+    # Juiz fixo, usado para as saídas dos dois provedores. Ao avaliar saídas do
+    # próprio Sonnet há risco de viés a favor de si mesmo; ver Curadoria no README.
+    provider:
+      id: anthropic:messages:claude-sonnet-5-5
+      label: juiz-sonnet-5-5
+      config:
+        max_tokens: 8000
+        thinking:
+          type: between_tools
+  assert:
+    # Gate: uma única chamada ao juiz aplica a rubrica (4 critérios de 0 a 2).
+    # score = total/8; pass = total >= 6 e nenhum critério zerado. O limiar 0.75
+    # equivale ao corte total >= 6. A nota por critério fica no campo "reason".
+    - type: llm-rubric
+      value: file://juiz/rubrica.txt
+      threshold: 0.75
+      metric: qualidade-causa-raiz
+
+tests:
+  - description: Degradação de busca e indexação do Cerebro (reindex travado)
+    vars:
+      pacote_artefatos: file://dados/pacote-cerebro.txt
