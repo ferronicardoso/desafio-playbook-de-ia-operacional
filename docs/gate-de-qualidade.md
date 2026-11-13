@@ -9,9 +9,9 @@ Regressão, neste playbook, é uma alteração que faz um prompt deixar de passa
 | Evento | O que roda | O que reprova o build |
 |---|---|---|
 | Pull request | só os prompts cujos arquivos mudaram (prompt, config, `dados/`, `juiz/`) | qualquer teste reprovado no job do prompt alterado |
-| Push na `main` | suíte completa | qualquer teste reprovado em qualquer prompt |
-| Segunda-feira, 06:00 UTC | suíte completa | idem |
-| Disparo manual | suíte completa | idem |
+| Disparo manual | suíte completa | qualquer teste reprovado em qualquer prompt |
+
+Commit, push e merge na `main` **não executam** o workflow, e não há agenda: o workflow só roda em pull request ou quando alguém o dispara manualmente.
 
 O que cada suíte verifica:
 
@@ -20,9 +20,9 @@ O que cada suíte verifica:
 
 ```mermaid
 flowchart TD
-    A["PR, push na main, agenda ou disparo manual"] --> B{"Evento"}
+    A["Pull request ou disparo manual"] --> B{"Evento"}
     B -->|"Pull request"| C["Matriz de 8 jobs, um por prompt"]
-    B -->|"main, agenda, manual"| D["Mesma matriz com force-run"]
+    B -->|"Disparo manual"| D["Mesma matriz com force-run"]
     C --> E{"Prompt, config ou dependências mudaram?"}
     E -->|"Não"| F["Job termina sem chamar modelo"]
     E -->|"Sim"| G["promptfoo eval"]
@@ -62,9 +62,13 @@ Cada decisão compara pelo menos duas alternativas. Os números de custo e latê
 |---|---|---|
 | (a) Suíte inteira em todo PR | nenhuma regressão escapa por não ter sido testada | cerca de US$ 0,85 mais o juiz por execução de PR, para validar prompts que não mudaram |
 | (b) Só os prompts alterados | um PR típico custa de US$ 0,04 a 0,20 e termina em poucos minutos | não vê regressão em prompt que não foi tocado: mudança de comportamento do modelo no provedor ou alteração em arquivo compartilhado |
-| (c) Alterados no PR, suíte completa na `main`, na agenda semanal e sob demanda | custo baixo por PR e cobertura total fora dele | a regressão de um prompt não alterado só aparece depois do merge ou na execução semanal |
+| (c) Alterados no PR e suíte completa sob demanda (disparo manual) | custo baixo por PR, cobertura total quando alguém decide pagar por ela | a regressão de um prompt não alterado só aparece quando alguém dispara a suíte completa |
+| (d) Alterados no PR e suíte completa a cada push na `main` | pega regressão logo após o merge | a suíte completa custa cerca de US$ 1 por push e repete, para o prompt alterado, o que o PR já testou |
+| (e) Alterados no PR e suíte completa em agenda semanal | pega mudança de comportamento do provedor sem depender de alguém lembrar | gasta cerca de US$ 4 por mês nas chaves sem que ninguém acione, inclusive em semanas sem nenhuma alteração |
 
-**Escolha: (c).** A agenda é **semanal** e não diária: a suíte completa custa cerca de US$ 1 por execução, o que daria cerca de US$ 30 por mês numa agenda diária contra cerca de US$ 4 numa semanal. Cada push na `main` que toca arquivos de prompt também roda a suíte completa.
+**Escolha: (c).** Ela é a única alternativa em que toda execução paga é iniciada por uma pessoa. A versão inicial do workflow combinava (d) e (e). Os dois gatilhos foram removidos: o push depois que um PR mergeado gerou duas execuções pagas (a do PR e a suíte completa do push), e a agenda por rodar sozinha, sem commit nem disparo, e gastar as chaves sem acionamento. Quem quiser a verificação periódica pode disparar a suíte completa de vez em quando.
+
+Consequência: o gate só atua em pull request. Um commit direto na `main` não é testado. Para o gate valer de fato, as alterações de prompt precisam entrar por PR, e a proteção de branch da `main` exigindo a verificação do workflow é o que garante isso (não configurada neste repositório).
 
 Custo medido por prompt (soma dos casos das últimas execuções; nota, triagem e networkpolicy vêm do CP08):
 
@@ -125,7 +129,6 @@ Custo medido por prompt (soma dos casos das últimas execuções; nota, triagem 
 - **Ainda a confirmar:** o job de um prompt não alterado precisa terminar sem chamar modelo num pull request.
 - **Comentários no PR:** cada job do prompt que roda comenta o resultado. Num PR que altera vários prompts haverá vários comentários.
 - **Tolerâncias herdadas:** os testes aceitam 20% acima do limite de palavras do prompt e 95% de itens com rótulo (ver a Curadoria dos READMEs de `diagnostico-do-forge` e `passos-da-migracao-do-forge`). O gate herda essa tolerância.
-- **Agenda:** o GitHub desativa workflows agendados em repositórios sem atividade por 60 dias.
 
 ## Observação da primeira execução completa
 
