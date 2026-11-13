@@ -126,7 +126,9 @@ Custo medido por prompt (soma dos casos das últimas execuções; nota, triagem 
 
 - **Não executado localmente.** Validei o YAML do workflow, a matriz e a resolução dos caminhos das configs a partir da raiz do repositório (com chaves falsas). O comportamento da action só se confirma numa execução real no GitHub.
 - **Confirmado na primeira execução:** o job fica vermelho quando um teste reprova (`Promptfoo evaluation failed (exit code 100)`).
-- **Ainda a confirmar:** o job de um prompt não alterado precisa terminar sem chamar modelo num pull request.
+- **Confirmado na execução de PR sem prompt alterado (`43344725094`):** os 8 jobs terminaram sem chamar modelo, e o log da action diz `No LLM prompt, config files, or dependencies were modified.` Custo de API zero.
+- **Custo de runner dos jobs pulados:** cada job pulado ainda levou cerca de 1,5 minuto, porque o passo de exportação baixa o promptfoo com `npx` mesmo sem avaliação para exportar. São cerca de 10 minutos de runner por PR sem mudança relevante, sem custo de API; fica como ineficiência conhecida.
+- **Ainda a confirmar:** o comentário da action no PR. O PR sem prompt alterado não recebeu comentário (a action só comenta quando avalia), então ele só aparece num PR que altere um prompt.
 - **Comentários no PR:** cada job do prompt que roda comenta o resultado. Num PR que altera vários prompts haverá vários comentários.
 - **Tolerâncias herdadas:** os testes aceitam 20% acima do limite de palavras do prompt e 95% de itens com rótulo (ver a Curadoria dos READMEs de `diagnostico-do-forge` e `passos-da-migracao-do-forge`). O gate herda essa tolerância.
 
@@ -154,13 +156,18 @@ A execução `43342657991` (commit `a19c50a`, a primeira com o artefato de resul
 
 O artefato `resultado-backpressure-no-relay` mostrou o motivo: o GPT 6 Sol reprovou só no assert de ambiguidade do "throughput sustentado". O modelo registrou a ambiguidade ("Não se sabe se 180.000 mensagens/s representa carga corrente ou capacidade de entrega"), mas com uma redação que o regex do assert não previa. **Foi um defeito do teste e não uma regressão do prompt**, e a terceira redação diferente que o assert encontrou em três execuções. A correção troca a busca por frases por uma checagem de conteúdo: alguma linha precisa citar o valor de 180.000 (ou "sustentado") e mencionar "capacidade" e "carga". Foi validada contra quatro saídas reais, inclusive a que reprovou, e uma saída que cita o 180.000 só como fato continua reprovando.
 
-Nas duas suítes completas, 3 dos 16 jobs ficaram vermelhos. Um tem causa conhecida (defeito do teste). Os outros dois (`nota` e `passos`, na primeira suíte) ficaram sem causa, porque o artefato com os motivos ainda não existia.
+### Terceira execução completa
+
+A execução `43343686360`, depois da correção do assert, terminou com os 8 jobs verdes na primeira tentativa.
+
+Nas três suítes completas, 3 dos 24 jobs ficaram vermelhos na primeira tentativa. Um tem causa conhecida (defeito do teste). Os outros dois (`nota` e `passos`, na primeira suíte) ficaram sem causa, porque o artefato com os motivos ainda não existia. Três suítes é pouco para estimar a taxa de intermitência.
 
 ## Evidência de execução
 
-A preencher depois das execuções no GitHub:
+Base das execuções: `https://github.com/ferronicardoso/desafio-playbook-de-ia-operacional/actions/runs/<número>`.
 
-| Evidência | Link da execução | Resultado |
+| Evidência | Execução | Resultado |
 |---|---|---|
-| Sucesso: suíte completa por disparo manual | a registrar | a registrar |
+| Sucesso: suíte completa (disparada pelo gatilho de push, hoje removido) | `43343686360` | 8 de 8 jobs verdes, com o `causa-raiz` em 3 repetições |
+| Sucesso: PR sem prompt alterado | `43344725094` | 8 de 8 jobs verdes, todos pularam a avaliação, sem custo de API |
 | Falha provocada: PR com prompt regredido | a registrar | a registrar |
