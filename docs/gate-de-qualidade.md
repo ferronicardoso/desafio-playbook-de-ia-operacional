@@ -170,4 +170,14 @@ Base das execuções: `https://github.com/ferronicardoso/desafio-playbook-de-ia-
 |---|---|---|
 | Sucesso: suíte completa (disparada pelo gatilho de push, hoje removido) | `43343686360` | 8 de 8 jobs verdes, com o `causa-raiz` em 3 repetições |
 | Sucesso: PR sem prompt alterado | `43344725094` | 8 de 8 jobs verdes, todos pularam a avaliação, sem custo de API |
-| Falha provocada: PR com prompt regredido | a registrar | a registrar |
+| Falha provocada: PR com prompt regredido | `43345869046` (PR #3, fechado sem merge) | job `diagnostico-do-forge` vermelho (2 testes passaram e 2 falharam), os outros 7 jobs pularam a avaliação |
+
+### Falha provocada
+
+Para demonstrar o gate, o PR #3 removeu do `diagnostico-do-forge/prompt.md` o bloco `<frase_de_insuficiencia>` e a instrução do passo 1 que mandava usá-lo (commit `f47812c`, numa branch de demonstração).
+
+- **O que o gate pegou:** o caso de entrada insuficiente reprovou nos dois modelos. Sem a frase fixa, o GPT 6 Sol respondeu à receita de bolo com um diagnóstico completo ("F1: O cenário apresenta uma receita de bolo de chocolate") e o Sonnet 5.5 respondeu com "Observação preliminar: o cenário recebido é uma receita de bolo de chocolate...". O assert de frase exata reprovou nos dois. Reprovaram também, como efeito da resposta longa, o `latency` do GPT (18,2 s contra 15 s) e o `cost` do Sonnet (US$ 0,020 contra 0,02). O caso principal (cenário do Forge) continuou passando.
+- **Comentário da action no PR:** `LLM prompt was modified in these files: devops/diagnostico-do-forge/prompt.md`, com a tabela Success 2 e Failure 2.
+- **Artefato:** `resultado-diagnostico-do-forge`, com o motivo de cada assert e as saídas dos modelos.
+- **Custo:** cerca de US$ 0,11 de geração, acima dos cerca de US$ 0,07 de uma execução normal desse prompt, porque o prompt regredido gerou texto longo no caso de entrada insuficiente.
+- **Descarte:** o PR foi fechado sem merge e a branch foi apagada. O commit `f47812c` não está na `main`, e o prompt na `main` mantém o bloco `<frase_de_insuficiencia>`.
