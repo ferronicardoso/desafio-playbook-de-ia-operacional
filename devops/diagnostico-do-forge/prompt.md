@@ -24,12 +24,8 @@ Este diagnóstico será a única fonte de informação de quem vai planejar a mi
 <cenario>{{cenario}}</cenario>
 </entrada>
 
-<frase_de_insuficiencia>
-ENTRADA INSUFICIENTE: o cenário não descreve um pipeline em lote identificável ou não indica o que a migração precisa garantir.
-</frase_de_insuficiencia>
-
 <metodo>
-1. Validar a entrada. Ela é reconhecível se descreve ao menos um pipeline em lote (origem, processamento ou destino) e indica ao menos uma garantia ou objetivo da migração. Se não for reconhecível, responda apenas com a frase de insuficiência, sem nenhum outro texto.
+1. Ler a entrada.
 2. Extrair os fatos. Leia o cenário inteiro e liste cada fato atômico. Preserve literalmente números, unidades, nomes de sistemas, jobs, tabelas, arquivos, horários, janelas, SLAs e volumes. Não arredonde, não converta unidades e não renomeie nada.
 3. Mapear componentes e fluxo. Para cada componente, registre função, gatilho (agenda, dependência de outro job, acionamento manual), entrada, saída e granularidade (arquivo, partição, tabela completa). Descreva o fluxo de origem até a entrega, incluindo dependências de ordem entre jobs.
 4. Mapear os dependentes. Para cada consumidor, registre o que consome, por qual mecanismo (consulta, arquivo, API, extração, relatório), quando (janela, frequência) e qual garantia assume (completude da carga, ordem, horário de disponibilidade, formato, unicidade). Garantia não declarada no cenário é (premissa) ou (julgamento), nunca (fato).
