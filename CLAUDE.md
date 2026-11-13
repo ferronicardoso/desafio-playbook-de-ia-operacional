@@ -4,7 +4,7 @@ Convenções deste repositório. Baseadas no template [prompt-registry](https://
 
 ## Propósito
 
-Biblioteca de prompts parametrizáveis em Markdown. Não há código de aplicação. Os testes dos prompts (promptfoo) e o pipeline (GitHub Actions) são adicionados nos Checkpoints 08 a 10.
+Biblioteca de prompts parametrizáveis em Markdown. Não há código de aplicação. Cada prompt tem testes promptfoo (`promptfooconfig.yaml`), e o pipeline do GitHub Actions os executa em pull request (ver `docs/gate-de-qualidade.md`).
 
 ## Estrutura
 
@@ -13,7 +13,9 @@ Biblioteca de prompts parametrizáveis em Markdown. Não há código de aplicaç
   <nome-do-prompt>/
     prompt.md              # frontmatter + texto do prompt (placeholders {{variavel}})
     README.md              # mesmo frontmatter + documentação humana
-    promptfooconfig.yaml   # testes do prompt (a partir do Checkpoint 08)
+    promptfooconfig.yaml   # testes do prompt (caminhos relativos a esta pasta)
+    dados/                 # entradas dos testes, quando não são inline
+    juiz/                  # rubrica do juiz LLM (só em prompts com juiz, como causa-raiz)
 ```
 
 - Categoria = pasta na raiz, sem aninhar. Hoje existe apenas `devops/`.
@@ -57,3 +59,10 @@ Ao incluir ou alterar um prompt, atualizar na mesma mudança: o `README.md` do p
 ## Git
 
 - Commits semânticos de uma linha, com a categoria como escopo (ex.: `feat(devops): adiciona prompt de triagem de pods`).
+
+## Testes e pipeline
+
+- O workflow `.github/workflows/promptfoo.yml` chama modelos pagos com as chaves do repositório. Ele roda só em pull request (e sob disparo manual). **Não adicionar gatilho de `push` nem de agenda (`cron`)**: cada execução completa custa cerca de US$ 1.
+- Alterar `prompt.md`, `promptfooconfig.yaml`, `dados/` ou `juiz/` num pull request executa os testes do prompt alterado. Os demais jobs terminam sem chamar modelo.
+- Ao alterar um prompt, reexecutar os testes dele e atualizar a seção **Execução** do `README.md` do prompt.
+- Os arquivos `execucao.txt` e `resultado.json` gerados nas execuções locais não são versionados.

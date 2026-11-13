@@ -35,10 +35,23 @@ O repositório foi montado a partir das convenções do `prompt-registry`, sem f
 | CP04 | `backpressure-no-relay` |
 | CP05 | `diagnostico-do-forge`, `passos-da-migracao-do-forge`, `plano-de-migracao-do-forge`: cadeia de três elos, em que a saída de cada um é a entrada do seguinte |
 | CP06 | `networkpolicy-sentinel` |
+| CP07 | organização do repositório: a estrutura em `devops/`, os índices e as convenções do [`CLAUDE.md`](./CLAUDE.md) |
+| CP08 | testes promptfoo de `nota-de-triagem`, `triagem-de-pods` e `networkpolicy-sentinel` (saída estruturada) |
+| CP09 | gate de qualidade com juiz LLM em `causa-raiz`: rubrica de quatro critérios, calibração contra a pontuação humana e `promptfooconfig.yaml` |
+| CP10 | testes dos oito prompts, workflow do GitHub Actions e justificativa do gate em [`docs/gate-de-qualidade.md`](./docs/gate-de-qualidade.md) |
 
 **Extensões em relação ao template:** os `README.md` ganham as seções **Execução** (modelo, entradas e saída real, com as iterações quando houve refino) e **Curadoria** (técnica, justificativa e refinos). O `CLAUDE.md` registra essas convenções e limita as tags a 2 a 5 por prompt.
 
 **Exemplo completo:** [`devops/networkpolicy-sentinel/`](./devops/networkpolicy-sentinel/) é o mais completo, com `prompt.md` de três placeholders, `README.md` com as iterações v1, v2 e v3 e a execução de validação.
+
+## Testes e pipeline
+
+Cada pasta de prompt tem um `promptfooconfig.yaml` com os testes do prompt, executados contra OpenAI (`gpt-6-sol`) e Anthropic (`claude-sonnet-5-5`). A documentação dos testes, com os resultados e a curadoria, fica na seção **Execução** do `README.md` de cada prompt.
+
+- **Executar um prompt localmente:** a partir da pasta do prompt, `promptfoo eval -c promptfooconfig.yaml`, com `OPENAI_API_KEY` e `ANTHROPIC_API_KEY` no ambiente. A versão usada é a 0.125.1.
+- **Pipeline:** [`.github/workflows/promptfoo.yml`](./.github/workflows/promptfoo.yml) roda em pull request, só para os prompts alterados, e sob disparo manual, para a suíte completa. Não há gatilho de push nem agenda, porque cada execução chama modelos pagos (a suíte completa custa cerca de US$ 1). Qualquer teste reprovado derruba o job.
+- **Decisões do gate, alternativas comparadas e evidências das execuções:** [`docs/gate-de-qualidade.md`](./docs/gate-de-qualidade.md).
+- **Chaves dos provedores:** secrets do repositório (`OPENAI_API_KEY` e `ANTHROPIC_API_KEY`). Nunca entram no repositório.
 
 ## Categorias
 
