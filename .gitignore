@@ -4,3 +4,7 @@ node_modules/
 .promptfoo/
 */settings.local.json
 /.claude
+
+# Saídas das execuções locais do promptfoo (execucao.txt e resultado.json em qualquer pasta)
+execucao.txt
+resultado.json
