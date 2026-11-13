@@ -145,6 +145,14 @@ Consequências para o gate:
 - Para tornar a próxima falha diagnosticável, o workflow passou a exportar o resultado da avaliação (`promptfoo export eval latest`) e a guardá-lo como artefato `resultado-<prompt>`, mesmo quando o job falha. O arquivo traz o motivo de cada assert e as saídas dos modelos.
 - Se a intermitência se repetir, as saídas possíveis são ampliar a margem dos limites mais apertados ou estender `repeat` e `repeat-min-pass` aos demais prompts, ao custo de repetir as chamadas. A decisão fica para depois de ver o motivo real nos artefatos.
 
+### Segunda execução completa
+
+A execução `43342657991` (commit `a19c50a`, a primeira com o artefato de resultado) teve 7 jobs verdes e o `backpressure-no-relay` vermelho. O `nota-de-triagem` e o `passos-da-migracao-do-forge`, que tinham falhado na primeira suíte, passaram.
+
+O artefato `resultado-backpressure-no-relay` mostrou o motivo: o GPT 6 Sol reprovou só no assert de ambiguidade do "throughput sustentado". O modelo registrou a ambiguidade ("Não se sabe se 180.000 mensagens/s representa carga corrente ou capacidade de entrega"), mas com uma redação que o regex do assert não previa. **Foi um defeito do teste e não uma regressão do prompt**, e a terceira redação diferente que o assert encontrou em três execuções. A correção troca a busca por frases por uma checagem de conteúdo: alguma linha precisa citar o valor de 180.000 (ou "sustentado") e mencionar "capacidade" e "carga". Foi validada contra quatro saídas reais, inclusive a que reprovou, e uma saída que cita o 180.000 só como fato continua reprovando.
+
+Nas duas suítes completas, 3 dos 16 jobs ficaram vermelhos. Um tem causa conhecida (defeito do teste). Os outros dois (`nota` e `passos`, na primeira suíte) ficaram sem causa, porque o artefato com os motivos ainda não existia.
+
 ## Evidência de execução
 
 A preencher depois das execuções no GitHub:
