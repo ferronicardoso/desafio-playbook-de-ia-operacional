@@ -63,11 +63,15 @@ tests:
           if (!/Forge[^\n]*\b900\b/.test(s)) problemas.push('comparação de L com o SLA do Forge (900 s) ausente');
           return { pass: problemas.length === 0, score: problemas.length === 0 ? 1 : 0,
                    reason: problemas.length ? problemas.join(' | ') : 'duração e comparações com os dois SLAs presentes' };
-      # O "throughput sustentado" é ambíguo (capacidade ou carga): deve ser registrado como ambíguo
+      # O "throughput sustentado" é ambíguo (capacidade ou carga): o prompt deve registrar as duas leituras.
+      # Verifica o conteúdo e não a frase (o modelo varia a redação): alguma linha cita o valor de 180.000 (ou
+      # "sustentado") e menciona "capacidade" e "carga" juntas.
       - type: javascript
         value: |
-          const ok = /ambíguo|ambígu|interpretação alternativa|outra interpretação|(pode|possa) representar/i.test(output);
-          return { pass: ok, score: ok ? 1 : 0, reason: ok ? 'ambiguidade do throughput sustentado registrada' : 'ambiguidade do throughput sustentado não registrada' };
+          const linhas = output.split('\n').filter(l => /180\.?000|sustentad/i.test(l) && /capacidade/i.test(l) && /carga/i.test(l));
+          const ok = linhas.length > 0;
+          return { pass: ok, score: ok ? 1 : 0,
+                   reason: ok ? 'ambiguidade registrada (' + linhas.length + ' linha(s) com o valor, "capacidade" e "carga")' : 'nenhuma linha trata o throughput sustentado como capacidade ou carga' };
       # A matriz candidatos x restrições é uma tabela Markdown
       - type: javascript
         value: |
