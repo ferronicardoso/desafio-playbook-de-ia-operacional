@@ -1,0 +1,90 @@
+name: Testes dos prompts (promptfoo)
+
+# Gate de qualidade do playbook: nenhuma alteração em prompt entra sem passar na suíte do prompt.
+# Justificativa das decisões: docs/gate-de-qualidade.md
+#
+# - Pull request: roda só os prompts alterados (a action pula o job quando prompt, config ou dependências
+#   da config não mudaram).
+# - Push na main, execução semanal e disparo manual: suíte completa (force-run), para pegar regressão em
+#   prompt que ninguém alterou (por exemplo, mudança de comportamento do modelo no provedor).
+# - Gate: qualquer teste reprovado derruba o job. No prompt de causa-raiz, o juiz LLM roda 3 vezes e cada
+#   teste precisa passar em 2 (repeat-min-pass), para tolerar a flutuação do juiz.
+
+on:
+  pull_request:
+    paths:
+      # Inclui as dependências das configs (dados e rubrica do juiz); README não dispara chamada a modelo.
+      - 'devops/**/prompt.md'
+      - 'devops/**/promptfooconfig.yaml'
+      - 'devops/**/dados/**'
+      - 'devops/**/juiz/**'
+      - '.github/workflows/promptfoo.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'devops/**/prompt.md'
+      - 'devops/**/promptfooconfig.yaml'
+      - 'devops/**/dados/**'
+      - 'devops/**/juiz/**'
+      - '.github/workflows/promptfoo.yml'
+  schedule:
+    - cron: '0 6 * * 1' # segunda-feira, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write # comentário com o resultado no PR
+
+concurrency:
+  group: promptfoo-${{ github.ref }}
+  cancel-in-progress: true # um push novo no PR cancela a execução anterior e evita pagar por ela
+
+jobs:
+  suite:
+    name: ${{ matrix.prompt }}
+    # PRs de fork não recebem secrets: sem chave, a suíte falharia por autenticação, e não por regressão
+    if: github.event.pull_request.head.repo.fork != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false # a falha de um prompt não esconde o resultado dos demais
+      max-parallel: 4
+      matrix:
+        prompt:
+          - nota-de-triagem
+          - triagem-de-pods
+          - networkpolicy-sentinel
+          - diagnostico-do-forge
+          - passos-da-migracao-do-forge
+          - plano-de-migracao-do-forge
+          - backpressure-no-relay
+        include:
+          # Único prompt com juiz LLM (não determinístico): 3 repetições, mínimo de 2 aprovações por teste
+          - prompt: causa-raiz
+            repeat: 3
+            repeat_min_pass: 2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # a action compara commits para saber o que mudou
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - uses: promptfoo/promptfoo-action@04839e664f52212b877170219dab0d7ad2bf6440 # v1.3.4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          promptfoo-version: 0.125.1 # mesma versão usada nos testes locais
+          config: devops/${{ matrix.prompt }}/promptfooconfig.yaml
+          prompts: devops/${{ matrix.prompt }}/prompt.md
+          force-run: ${{ github.event_name != 'pull_request' }}
+          repeat: ${{ matrix.repeat }}
+          repeat-min-pass: ${{ matrix.repeat_min_pass }}
+          no-cache: true # sem cache: cada execução mede o modelo de verdade
+          no-share: true # não envia resultados para o serviço de compartilhamento do promptfoo
+          max-concurrency: 2
+          no-progress-bar: true
