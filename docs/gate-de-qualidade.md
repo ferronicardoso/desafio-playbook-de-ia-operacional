@@ -121,10 +121,29 @@ Custo medido por prompt (soma dos casos das últimas execuções; nota, triagem 
 ## Riscos conhecidos e o que a primeira execução precisa confirmar
 
 - **Não executado localmente.** Validei o YAML do workflow, a matriz e a resolução dos caminhos das configs a partir da raiz do repositório (com chaves falsas). O comportamento da action só se confirma numa execução real no GitHub.
-- **A confirmar:** o job precisa ficar vermelho quando um teste reprova (a documentação diz que sim, e que só um limiar configurado suprime a falha), e o job de um prompt não alterado precisa terminar sem chamar modelo.
+- **Confirmado na primeira execução:** o job fica vermelho quando um teste reprova (`Promptfoo evaluation failed (exit code 100)`).
+- **Ainda a confirmar:** o job de um prompt não alterado precisa terminar sem chamar modelo num pull request.
 - **Comentários no PR:** cada job do prompt que roda comenta o resultado. Num PR que altera vários prompts haverá vários comentários.
 - **Tolerâncias herdadas:** os testes aceitam 20% acima do limite de palavras do prompt e 95% de itens com rótulo (ver a Curadoria dos READMEs de `diagnostico-do-forge` e `passos-da-migracao-do-forge`). O gate herda essa tolerância.
 - **Agenda:** o GitHub desativa workflows agendados em repositórios sem atividade por 60 dias.
+
+## Observação da primeira execução completa
+
+A primeira execução da suíte completa (push na `main`, execução `43340623711`) **não passou de primeira**:
+
+| Tentativa | O que rodou | Resultado |
+|---|---|---|
+| 1 | os 8 jobs | 6 verdes e 2 vermelhos: `nota-de-triagem` (4 de 6 testes; a entrada do Sentinel reprovou nos dois modelos) e `passos-da-migracao-do-forge` (2 de 4; o caso principal reprovou nos dois modelos) |
+| 2 | só o `nota-de-triagem` | passou |
+| 3 | só o `passos-da-migracao-do-forge` | passou |
+
+Nenhum arquivo mudou entre as tentativas, então as duas falhas foram intermitentes. **A causa não foi determinada:** o log da action mostra a tabela de saídas, mas não o motivo de cada assert reprovado, e a action apaga o JSON de resultado. Hipótese não confirmada para o `nota`: ele tem os limites mais apertados da biblioteca (5 s e US$ 0,01, com o Sonnet em 0,0089 a 0,0098 nas medições locais).
+
+Consequências para o gate:
+
+- Num total de 8 jobs, 2 reprovaram por variação na primeira execução. Com a regra "qualquer teste reprovado derruba o job", a suíte completa pode ficar vermelha sem que nenhum prompt tenha piorado, e a reexecução manual é o que resolve hoje.
+- Para tornar a próxima falha diagnosticável, o workflow passou a exportar o resultado da avaliação (`promptfoo export eval latest`) e a guardá-lo como artefato `resultado-<prompt>`, mesmo quando o job falha. O arquivo traz o motivo de cada assert e as saídas dos modelos.
+- Se a intermitência se repetir, as saídas possíveis são ampliar a margem dos limites mais apertados ou estender `repeat` e `repeat-min-pass` aos demais prompts, ao custo de repetir as chamadas. A decisão fica para depois de ver o motivo real nos artefatos.
 
 ## Evidência de execução
 

@@ -88,3 +88,20 @@ jobs:
           no-share: true # não envia resultados para o serviço de compartilhamento do promptfoo
           max-concurrency: 2
           no-progress-bar: true
+
+      # O log da action mostra só a tabela de saídas, sem o motivo de cada assert reprovado, e a action apaga
+      # o JSON de resultado. O promptfoo grava a avaliação no banco local do runner: exporta e guarda como
+      # artefato, inclusive quando o job falha, para diagnosticar a falha e servir de evidência.
+      - name: Exportar o resultado da avaliação
+        if: always()
+        continue-on-error: true # sem avaliação (job pulado por não haver mudança relevante), não há o que exportar
+        run: npx --yes promptfoo@0.125.1 export eval latest --output "$RUNNER_TEMP/resultado-${{ matrix.prompt }}.json"
+
+      - name: Guardar o resultado como artefato
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: resultado-${{ matrix.prompt }}
+          path: ${{ runner.temp }}/resultado-${{ matrix.prompt }}.json
+          if-no-files-found: ignore
+          retention-days: 30
