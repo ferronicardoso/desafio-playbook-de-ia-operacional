@@ -1,0 +1,109 @@
+description: Plano de migração do Forge - testes determinísticos (CP10)
+
+# Caminhos relativos a esta pasta. Executar a partir dela:
+#   promptfoo eval -c promptfooconfig.yaml --no-cache --output resultado.json
+prompts:
+  - file://prompt.md
+
+providers:
+  - id: openai:gpt-6-sol
+    label: openai-gpt-6-sol
+    config:
+      reasoning_effort: medium
+  - id: anthropic:messages:claude-sonnet-5-5
+    label: anthropic-sonnet-5-5
+    config:
+      # Saída de até 3.650 palavras mais raciocínio; 20000 evita truncar sem exigir streaming
+      max_tokens: 20000
+      thinking:
+        type: between_tools
+
+tests:
+  - description: Passos da migração do Forge (saída real do elo 2) como entrada
+    vars:
+      passos: file://dados/passos.txt
+    assert:
+      # Título e cinco seções, nesta ordem
+      - type: javascript
+        value: |
+          if (!output.trim().startsWith('# PLANO DE MIGRAÇÃO EXECUTÁVEL')) {
+            return { pass: false, score: 0, reason: 'título "# PLANO DE MIGRAÇÃO EXECUTÁVEL" ausente no início' };
+          }
+          const titulos = [
+            '## 1. Referências, premissas e bloqueios', '## 2. Papéis', '## 3. Plano por etapa',
+            '## 4. Pontos de não retorno', '## 5. Verificação contínua dos invariantes',
+          ];
+          let pos = -1;
+          const problemas = [];
+          for (const t of titulos) {
+            const i = output.indexOf(t, pos + 1);
+            if (i < 0 || (i > 0 && output[i - 1] !== '\n')) { problemas.push(t); continue; }
+            pos = i;
+          }
+          return { pass: problemas.length === 0, score: problemas.length === 0 ? 1 : 0,
+                   reason: problemas.length ? 'seções ausentes ou fora de ordem: ' + problemas.join(' | ') : 'cinco seções na ordem' };
+      # Toda etapa da entrada (E#) aparece no plano, na ordem recebida, com verificações, go/no-go e rollback completo
+      - type: javascript
+        value: |
+          const esperadas = [...context.vars.passos.matchAll(/^### (E\d+)\b/gm)].map(m => m[1]);
+          const ini = output.indexOf('## 3. Plano por etapa');
+          const fim = output.indexOf('## 4. Pontos de não retorno');
+          if (ini < 0 || fim < 0) return { pass: false, score: 0, reason: 'seção 3 ou 4 ausente' };
+          const secao = output.slice(ini, fim);
+          const blocos = secao.split(/^### (?=E\d+)/m).slice(1);
+          const encontradas = blocos.map(b => b.match(/^(E\d+)/)[1]);
+          const problemas = [];
+          if (encontradas.join(',') !== esperadas.join(',')) {
+            problemas.push('etapas do plano [' + encontradas.join(',') + '] diferem das da entrada [' + esperadas.join(',') + ']');
+          }
+          const exigidos = ['Verificações antes', 'Verificações depois', 'Go/no-go', 'Rollback', 'É revertido', 'Não é revertido', 'Estado após o rollback'];
+          for (const b of blocos) {
+            const nome = b.match(/^(E\d+)/)[1];
+            const falta = exigidos.filter(x => !b.includes(x));
+            if (falta.length) problemas.push(nome + ' sem: ' + falta.join(', '));
+          }
+          return { pass: problemas.length === 0, score: problemas.length === 0 ? 1 : 0,
+                   reason: problemas.length ? problemas.join(' | ') : esperadas.length + ' etapas completas (verificações, go/no-go, rollback)' };
+      # Todo invariante (I#) da entrada aparece na verificação contínua (seção 5)
+      - type: javascript
+        value: |
+          const ids = [...new Set([...context.vars.passos.matchAll(/^- (I\d+):/gm)].map(m => m[1]))];
+          const i = output.indexOf('## 5. Verificação contínua dos invariantes');
+          if (i < 0) return { pass: false, score: 0, reason: 'seção 5 ausente' };
+          const secao = output.slice(i);
+          const faltando = ids.filter(id => !new RegExp('\\b' + id + '\\b').test(secao));
+          return { pass: faltando.length === 0, score: faltando.length === 0 ? 1 : 0,
+                   reason: faltando.length ? 'invariantes fora da seção 5: ' + faltando.join(', ') : ids.length + ' invariantes cobertos na seção 5' };
+      # Os passos trazem "limiar a definir": o plano deve manter "a definir" e não inventar valores
+      - type: icontains
+        value: 'a definir'
+      # Sem LaTeX nas fórmulas
+      - type: javascript
+        value: |
+          const achou = /\\frac|\\\(|\\\[|\$\$/.test(output);
+          return { pass: !achou, score: achou ? 0 : 1, reason: achou ? 'delimitador ou comando LaTeX encontrado' : 'sem LaTeX' };
+      # Limite do prompt: 3.650 palavras, com tolerância de 20% (4.380); o limite do prompt é orientação ao
+      # modelo e ultrapassagens são conhecidas (palavras = tokens com letra ou número)
+      - type: javascript
+        value: |
+          const n = output.split(/\s+/).filter(t => /[\p{L}\p{N}]/u.test(t)).length;
+          return { pass: n <= 4380, score: n <= 4380 ? 1 : 0, reason: n + ' palavras (limite do prompt 3650, tolerância até 4380)' };
+      # Limite próprio (enunciado: 5 s e US$ 0,01): cerca de 2x o maior valor observado
+      - type: latency
+        threshold: 90000
+      - type: cost
+        threshold: 0.20
+
+  - description: Entrada insuficiente (texto que não é uma sequência de etapas)
+    vars:
+      passos: 'Receita de bolo de chocolate: misture 3 ovos, 2 xícaras de farinha e 1 xícara de açúcar; asse por 40 minutos.'
+    assert:
+      - type: javascript
+        value: |
+          const f = 'ENTRADA INSUFICIENTE: o conteúdo recebido não é uma sequência de etapas de migração reconhecível.';
+          const ok = output.trim() === f;
+          return { pass: ok, score: ok ? 1 : 0, reason: ok ? 'frase fixa de insuficiência' : 'saída diferente da frase fixa: ' + output.trim().slice(0, 160) };
+      - type: latency
+        threshold: 15000
+      - type: cost
+        threshold: 0.02

@@ -1,0 +1,77 @@
+# DIAGNÓSTICO DO PIPELINE
+
+## 1. Fatos do cenário
+
+- F1: O Forge utiliza um job em cron chamado "forge-batch-ingest", que acorda a cada 60min para ingestão. (fato)
+- F2: A transformação possui 14 etapas de processamento encadeadas, executadas em Spark, com duração total de ~40min. (fato)
+- F3: O destino do processamento são tabelas no data warehouse, particionadas por hora. (fato)
+- F4: Se um lote falha, o próximo acumula o dobro de volume. (fato)
+- F5: Sentinel depende do Forge e lê as tabelas agregadas. (fato)
+- F6: Cerebro depende do Forge e indexa os eventos transformados. (fato)
+- F7: Os relatórios de billing da Pepper dependem do Forge e rodam de madrugada. (fato)
+- F8: A migração precisa consumir do Relay continuamente, processando em pequenos blocos no lugar do lote de 1h. (fato)
+- F9: A migração precisa manter quem depende do Forge funcionando durante a transição. (fato)
+- F10: A migração não pode realizar uma virada única (big-bang); precisa ocorrer em passos e permitir voltar atrás. (fato)
+
+## 2. Componentes e fluxo de dados
+
+- C1: "forge-batch-ingest" — função: ingestão do Forge — gatilho: cron a cada 60min — entrada: não informado → saída: dados para processamento — granularidade: lote de 1h — base: F1, F8. (julgamento)
+- C2: Spark — função: transformação em 14 etapas de processamento encadeadas — gatilho: dependência do fluxo de ingestão (premissa) — entrada: dados ingeridos → saída: eventos transformados e dados destinados às tabelas — granularidade: lote; ~40min no total — base: F2, F3, F6. (julgamento)
+- C3: Data warehouse — função: armazenamento do resultado do Forge — gatilho: gravação após processamento (premissa) — entrada: dados processados → saída: tabelas particionadas por hora — granularidade: partição por hora — base: F3. (julgamento)
+- C4: Relay — função: origem prevista para consumo contínuo — gatilho: não informado — entrada: não informado → saída: dados consumidos em pequenos blocos — granularidade: pequenos blocos, tamanho não informado — base: F8. (julgamento)
+- C5: Forge — função: pipeline de ingestão, transformação e disponibilização de dados — gatilho: cron de C1 — entrada: origem atual não informada → saída: tabelas e eventos transformados utilizados pelos dependentes — granularidade: lote de 1h no estado atual — base: F1, F2, F3, F5, F6, F7, F8. (julgamento)
+- Fluxo: C1 → C2 → C3 — ingestão antecede transformação e disponibilização nas tabelas; as 14 etapas de C2 são encadeadas, mas sua ordem individual não foi informada. (julgamento)
+- Fluxo: C4 → processamento em pequenos blocos → disponibilização aos dependentes — fluxo requerido, sem componentes intermediários ou contratos de entrega especificados. (julgamento)
+
+## 3. Dependentes e forma de consumo
+
+- D1: Sentinel — consome tabelas agregadas de C3 — mecanismo: leitura das tabelas — quando: frequência e horário não informados — garantia assumida: continuidade de acesso e consistência dos agregados; completude e disponibilidade temporal específicas não informadas — base: F5, F9. (premissa)
+- D2: Cerebro — consome eventos transformados de C5 — mecanismo: indexação; interface de entrega não informada — quando: frequência e horário não informados — garantia assumida: continuidade de recebimento, integridade e ausência de duplicações indevidas dos eventos; ordenação não informada — base: F6, F9. (premissa)
+- D3: Relatórios de billing da Pepper — consomem resultados do Forge C5; tabelas específicas não informadas — mecanismo: execução de relatórios — quando: de madrugada, sem horário exato informado — garantia assumida: dados necessários disponíveis e completos no momento da execução; critérios de fechamento não informados — base: F7, F9. (premissa)
+
+## 4. Pontos frágeis
+
+- P1: C1/C2 — falha de um lote → volume não processado acumula no próximo → próximo lote recebe o dobro de volume, podendo ampliar o tempo de processamento e atrasar entregas — dependentes afetados: D1, D2, D3 — base: F1, F2, F4, F5, F6, F7. (julgamento)
+- P2: C1/C2 — execução em intervalos de 60min combinada com transformação de ~40min → disponibilização condicionada à conclusão do processamento → possível defasagem dos dados consumidos por D1, D2 e D3 — dependentes afetados: D1, D2, D3 — base: F1, F2, F3. (julgamento)
+- P3: C2 — falha em uma das 14 etapas encadeadas → possível interrupção das etapas subsequentes → risco de atraso ou indisponibilidade dos resultados do lote — dependentes afetados: D1, D2, D3 — base: F2, F5, F6, F7. (julgamento)
+- P4: C3/C5 — disponibilização inconsistente durante a coexistência de caminhos de processamento → possíveis diferenças entre resultados consumidos → risco de divergência em agregações, indexação e billing — dependentes afetados: D1, D2, D3 — base: F5, F6, F7, F9, F10. (julgamento)
+
+## 5. Riscos da migração
+
+- R1: Completude — substituição do lote de 1h por pequenos blocos → agregados ou relatórios podem consumir dados antes da conclusão lógica do período — atinge: D1, D3, I1. (julgamento)
+- R2: Ordenação — processamento incremental pode alterar a ordem de disponibilização dos eventos → possível impacto na indexação e nos agregados dependentes de ordem — atinge: D1, D2, I1. (julgamento)
+- R3: Duplicidade e idempotência — coexistência ou reprocessamento pode entregar o mesmo evento mais de uma vez → risco de duplicação de índices, agregações e valores de billing — atinge: D1, D2, D3, I1. (julgamento)
+- R4: Dados atrasados e reprocessamento — eventos recebidos após o processamento de determinado período podem modificar resultados já disponibilizados → risco de inconsistência temporal — atinge: D1, D2, D3, I1. (julgamento)
+- R5: Divergência entre caminhos — caminhos antigo e novo podem produzir resultados diferentes durante a coexistência → risco de consumidores observarem versões incompatíveis dos mesmos dados — atinge: D1, D2, D3, I1. (julgamento)
+- R6: Picos e contrapressão — acúmulo de dados ou aumento de volume pode superar a capacidade de processamento → atrasos propagados aos consumidores — atinge: D1, D2, D3, I1; evidência atual: F4. (julgamento)
+- R7: Reconciliação — diferença de granularidade entre lote de 1h e pequenos blocos dificulta estabelecer equivalência entre resultados → risco de discrepâncias não identificadas — atinge: D1, D2, D3, I1. (julgamento)
+- R8: Reversibilidade — rollback com dados parcialmente processados em caminhos distintos pode produzir lacunas, duplicações ou divergências → risco de comprometer a continuidade dos consumidores — atinge: D1, D2, D3, I1. (julgamento)
+
+## 6. Invariantes
+
+- I1: Sentinel, Cerebro e relatórios de billing da Pepper devem permanecer funcionais durante a transição, a coexistência e após eventual rollback — origem: F9, F10 — como verificar: confirmar, em cada condição, a continuidade da leitura das tabelas agregadas por Sentinel, da indexação dos eventos transformados por Cerebro e da execução dos relatórios de billing da Pepper de madrugada; critérios quantitativos de aceitação não informados. (julgamento)
+
+## 7. Lacunas e premissas
+
+### Lacunas
+
+- L1: Origem atual do "forge-batch-ingest", protocolo de ingestão, identificação e limites dos lotes não informados — impede caracterizar integralmente a entrada e a recuperação de dados — itens afetados: C1, C5, R4, R7. (julgamento)
+- L2: Gatilhos individuais, entradas, saídas, dependências internas e comportamento de falha das 14 etapas Spark não informados — impede determinar a propagação exata de falhas — itens afetados: C2, R6. (julgamento)
+- L3: Nomes, schemas, chaves, regras de agregação e critérios de publicação das tabelas não informados — impede definir equivalência, completude e compatibilidade verificáveis — itens afetados: C3, D1, R1, R3, R5, R7. (julgamento)
+- L4: Interface, formato, identificador, ordenação, retenção, possibilidade de replay e comportamento de entrega do Relay não informados — impede avaliar integralmente consumo incremental e recuperação — itens afetados: C4, R2, R3, R4. (julgamento)
+- L5: Frequência, horários, consultas e exigências de completude de Sentinel não informados — impede estabelecer critérios temporais e quantitativos de continuidade — itens afetados: D1, R1, I1. (julgamento)
+- L6: Origem física, mecanismo de entrega, frequência, regras de indexação, unicidade e ordenação de Cerebro não informados — impede determinar garantias efetivamente necessárias — itens afetados: D2, R2, R3, I1. (julgamento)
+- L7: Horário exato de madrugada, origem consultada, período de apuração, fechamento e tolerância a correções dos relatórios de billing da Pepper não informados — impede verificar completude financeira e disponibilidade exigida — itens afetados: D3, R1, R4, I1. (julgamento)
+- L8: Volumes absolutos, distribuição temporal, capacidade, picos, atrasos admissíveis e comportamento após falhas sucessivas não informados — impede quantificar acúmulo e contrapressão — itens afetados: C1, C2, R6. (julgamento)
+- L9: Estratégia atual de retry, checkpoints, reprocessamento, deduplicação e tratamento de lotes parcialmente concluídos não informada — impede avaliar recuperação e idempotência — itens afetados: C2, R3, R4, R8. (julgamento)
+- L10: Critérios de reconciliação, tolerância a divergências e comportamento de leitura durante coexistência e rollback não informados — impede definir invariantes adicionais de equivalência e recuperação verificáveis — itens afetados: R5, R7, R8, I1. (julgamento)
+- L11: Contratos de evolução de schema, compatibilidade entre versões e consumidores não informados — impede avaliar o risco de alterações estruturais sobre D1, D2 e D3 — itens afetados: C3, D1, D2, D3. (julgamento)
+- L12: Custos atuais, recursos disponíveis, monitoramento, responsabilidades operacionais e limites de carga não informados — impede avaliar quantitativamente custo e carga operacional da coexistência — itens afetados: C1, C2, C3, C4, R6. (julgamento)
+
+### Premissas assumidas
+
+- S1: A ingestão de C1 alimenta C2, que precede a gravação em C3 — invalidada se houver processamento independente, paralelo ou outro caminho de publicação. (premissa)
+- S2: Sentinel depende de consistência dos agregados disponíveis — invalidada se aceitar resultados parciais ou inconsistências temporárias. (premissa)
+- S3: Cerebro precisa preservar a integridade dos eventos indexados e evitar duplicações indevidas — invalidada se sua indexação admitir ou corrigir automaticamente duplicações. (premissa)
+- S4: Os relatórios de billing da Pepper dependem de dados completos no momento da execução de madrugada — invalidada se aceitarem fechamento parcial ou correções posteriores. (premissa)
+- S5: A continuidade exigida em F9 inclui a preservação dos contratos de consumo durante coexistência e rollback — invalidada se forem permitidas alterações ou interrupções previamente aceitas pelos consumidores. (premissa)

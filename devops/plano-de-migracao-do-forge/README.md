@@ -49,6 +49,7 @@ Um exemplo de execução com saída real está na seção [Execução](#execuç�
 - Os pontos frágeis aparecem nas referências, mas não são ligados a verificações ou gatilhos de rollback, embora a etapa de processamento em paralelo simule falha e recuperação.
 - O plano termina na desativação reversível do lote. A retirada definitiva do caminho em lote depende de uma "decisão posterior específica" que o plano não define.
 - O resultado vem de duas execuções com um único modelo. A primeira usou uma versão anterior do prompt; a saída registrada abaixo é a da versão final.
+- Os testes promptfoo (seção "Testes determinísticos") verificam estrutura, etapas completas (verificações, go/no-go, rollback) e cobertura dos invariantes. Como a entrada traz um único invariante (`I1`), a verificação de cobertura é trivial. Os testes não verificam se há números inventados nem nomes de pessoas, nem se o rollback de cada etapa é correto.
 
 ## Execução
 
@@ -418,6 +419,54 @@ Rollback
 - I1 — Decisão: suspender avanço diante de violação dos critérios aprovados; registrar evidências, decisão go/no-go, autorização de rollback e aceite dos responsáveis afetados em cada etapa E1–E7 — aprovador da mudança. (julgamento)
 ```
 
+### Testes determinísticos (promptfoo)
+
+A saída real do elo 2 (passos) roda como entrada de teste em [`promptfooconfig.yaml`](promptfooconfig.yaml), contra dois provedores, junto com um caso de entrada insuficiente. Comando, a partir desta pasta:
+
+```powershell
+promptfoo eval -c promptfooconfig.yaml --no-cache --output resultado.json
+```
+
+| Item | Valor |
+|---|---|
+| Versão do promptfoo | 0.125.1 |
+| Provedor 1 | OpenAI `gpt-6-sol`, `reasoning_effort: medium` |
+| Provedor 2 | Anthropic `claude-sonnet-5-5`, `thinking.type: between_tools`, `max_tokens: 20000` (a saída de até 3.650 palavras mais o raciocínio pode truncar em 16000) |
+| Prompt testado | `prompt.md` v1.0.0 (arquivo inteiro, com frontmatter) |
+| Entrada | [`dados/passos.txt`](dados/passos.txt), a saída do elo 2 registrada em [`passos-da-migracao-do-forge`](../passos-da-migracao-do-forge/) |
+
+Asserts:
+
+| Caso | Tipo | Critério |
+|---|---|---|
+| Passos | `javascript` | título `# PLANO DE MIGRAÇÃO EXECUTÁVEL` e as cinco seções, na ordem |
+| Passos | `javascript` | as sete etapas da entrada (E1 a E7) aparecem no plano, na mesma ordem, cada uma com verificações antes e depois, go/no-go, rollback, `É revertido`, `Não é revertido` e estado após o rollback |
+| Passos | `javascript` | todo invariante (I#) da entrada aparece na seção 5 |
+| Passos | `icontains` | `a definir` (os passos não trazem limiares e o prompt proíbe inventar) |
+| Passos | `javascript` | sem LaTeX |
+| Passos | `javascript` | até **4.380** palavras (limite do prompt, 3.650, mais 20%) |
+| Passos | `latency` e `cost` | até **90000 ms** e **US$ 0,20** (limites próprios; enunciado: 5000 ms e US$ 0,01) |
+| Insuficiente | `javascript` | saída exatamente igual à frase fixa `ENTRADA INSUFICIENTE: ...` |
+| Insuficiente | `latency` e `cost` | até 15000 ms e US$ 0,02 |
+
+Antes da primeira execução, os asserts foram validados sem custo contra a saída real registrada acima (passam) e contra saídas truncadas (falham).
+
+Resultado da última execução (`Results: 4 passed (100%), 0 failed, 0 errors`):
+
+| Caso | Modelo | Resultado | Latência | Custo (US$) | Palavras |
+|---|---|---|---|---|---|
+| Passos | gpt-6-sol | PASS | 40331 ms | 0,0774 | 2861 |
+| Passos | claude-sonnet-5-5 | PASS | 46337 ms | 0,1060 | 2727 |
+| Insuficiente | gpt-6-sol | PASS | 1134 ms | 0,0056 | 14 |
+| Insuficiente | claude-sonnet-5-5 | PASS | 1026 ms | 0,0071 | 14 |
+
+Histórico das execuções:
+
+| Execução | Configuração | Resultado | Falhas |
+|---|---|---|---|
+| 1 | até 3.650 palavras (limite do prompt), limites de 240 s e US$ 0,40 | 4/4 | nenhuma |
+| 2 | tolerância de 20% (4.380 palavras), limites de 90 s e US$ 0,20 | 4/4 | nenhuma |
+
 ## Curadoria
 
 **Técnica:** encadeamento de prompts (prompt chaining), sem few-shot. Este elo resolve a última etapa do raciocínio: transformar etapas em um plano que alguém possa executar, verificar e desfazer. Os blocos do prompt mapeiam assim: o passo 2 do `<metodo>` consolida referências e bloqueios, para que o plano seja entendido sem a entrada; o passo 3 define os papéis; o passo 4 detalha cada etapa (ações, verificações, go/no-go e rollback); o passo 5 lista os pontos de não retorno; o passo 6 define a verificação contínua dos invariantes; o passo 7 impede reordenar a estratégia sem registro; `<regras>` proíbe inventar valores, exige que todo rollback distinga o que é revertido do que não é e fixa responsáveis por papel. Exemplos de plano completo ancorariam o modelo em uma estrutura específica e prejudicariam o reuso.
@@ -427,3 +476,11 @@ Rollback
 **Refinos:** o prompt foi criado por meta-prompting com o Opus 5.5 e refinado com revisão humana. O `nome` e as tags passaram ao padrão do repositório e a frase de insuficiência passou para caixa alta. O prompt passou a receber e a listar os pontos frágeis e os fatos com números e nomes literais, a registrar problemas de ordenação em uma subseção própria e a ter limites maiores (de 2.800 para 3.350 palavras, com a seção 3 em 2.300). A primeira execução mostrou três problemas, corrigidos antes da execução registrada: o plano citava lacunas (`L1`, `L14`) e premissas (`S1`, `S5`) por código sem descrevê-las, o que impedia o entendimento sem outro documento; a primeira etapa listava como bloqueio prévio as lacunas que ela mesma resolve; e a verificação da etapa de captura trazia um valor ("tolerância zero") que não constava da entrada. O prompt passou a exigir a descrição de cada L# e S# na seção 1, a registrar a primeira etapa como "resolvidas por esta etapa" e a proibir limiares que não venham da entrada ou de eventos do cenário. O limite total subiu para 3.650 palavras, com a seção 1 em 750.
 
 **Modelo:** GPT 6 Sol com esforço de raciocínio médio. Na execução final produziu as sete etapas na ordem recebida, descreveu todas as lacunas e premissas, deu a cada etapa verificações antes e depois, go/no-go e rollback com a separação entre o que é revertido e o que não é, usou papéis genéricos e declarou, na etapa final, que a perda da capacidade de replay ou reativação impede o rollback garantido e não está autorizada. Os pontos fracos foram a ausência de limiares e a atribuição de papéis por passo no rollback.
+
+**Curadoria dos testes (CP10):**
+
+- **Entradas:** a saída real do elo 2, gravada em `dados/passos.txt`, para o teste não depender de executar os elos anteriores, e um texto sem relação com etapas de migração (uma receita de bolo) para o caso de entrada insuficiente.
+- **O que passou desde a primeira execução:** todos os casos, nas duas execuções e nos dois modelos. As sete etapas apareceram completas (verificações antes e depois, go/no-go e rollback com `É revertido` e `Não é revertido`), o invariante `I1` está na seção 5 e `a definir` foi mantido para os limiares ausentes. O prompt não foi alterado: a versão testada é a v1.0.0.
+- **O que mudou nos testes:** nada falhou. Os limites de latência e custo foram apertados depois da execução 1, de 240 s e US$ 0,40 para 90 s e US$ 0,20, cerca de 2 vezes o maior valor medido (46,3 s e US$ 0,106 no Sonnet na execução 2), e o limite de palavras ganhou 20% de tolerância, como nos demais prompts da cadeia. As saídas ficaram em 2282 a 2861 palavras, longe de 3.650.
+- **Ajuste de configuração:** o Sonnet usa `max_tokens: 20000`, porque 16000 pode truncar uma saída longa quando o raciocínio adaptativo consome parte do limite, como aconteceu no CP08.
+- **O que os testes não cobrem:** a entrada tem um único invariante, então a cobertura de invariantes é trivial. Os testes não detectam números inventados, nomes de pessoas nem se o rollback de cada etapa está tecnicamente correto.

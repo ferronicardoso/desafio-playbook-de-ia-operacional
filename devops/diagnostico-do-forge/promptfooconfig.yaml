@@ -1,0 +1,108 @@
+description: Diagnóstico do Forge - testes determinísticos (CP10)
+
+# Caminhos relativos a esta pasta. Executar a partir dela:
+#   promptfoo eval -c promptfooconfig.yaml --no-cache --output resultado.json
+prompts:
+  - file://prompt.md
+
+providers:
+  - id: openai:gpt-6-sol
+    label: openai-gpt-6-sol
+    config:
+      reasoning_effort: medium
+  - id: anthropic:messages:claude-sonnet-5-5
+    label: anthropic-sonnet-5-5
+    config:
+      max_tokens: 16000
+      thinking:
+        type: between_tools
+
+tests:
+  - description: Cenário completo do Forge (pipeline em lote, três dependentes)
+    vars:
+      cenario: file://dados/cenario-forge.txt
+    assert:
+      # Título e sete seções, nesta ordem
+      - type: javascript
+        value: |
+          if (!output.trim().startsWith('# DIAGNÓSTICO DO PIPELINE')) {
+            return { pass: false, score: 0, reason: 'título "# DIAGNÓSTICO DO PIPELINE" ausente no início' };
+          }
+          const titulos = [
+            '## 1. Fatos do cenário', '## 2. Componentes e fluxo de dados',
+            '## 3. Dependentes e forma de consumo', '## 4. Pontos frágeis',
+            '## 5. Riscos da migração', '## 6. Invariantes', '## 7. Lacunas e premissas',
+          ];
+          let pos = -1;
+          const problemas = [];
+          for (const t of titulos) {
+            const i = output.indexOf(t, pos + 1);
+            if (i < 0 || (i > 0 && output[i - 1] !== '\n')) { problemas.push(t); continue; }
+            pos = i;
+          }
+          return { pass: problemas.length === 0, score: problemas.length === 0 ? 1 : 0,
+                   reason: problemas.length ? 'seções ausentes ou fora de ordem: ' + problemas.join(' | ') : 'sete seções na ordem' };
+      # Números e nomes do cenário preservados literalmente
+      - type: contains-all
+        value:
+          - '60min'
+          - '14 etapas'
+          - '40min'
+          - 'forge-batch-ingest'
+          - 'Sentinel'
+          - 'Cerebro'
+          - 'Pepper'
+      # Itens identificados (F1, C1, D1...) terminam com rótulo que começa por fato, premissa ou julgamento,
+      # incluindo rótulo composto como "(fato para X; julgamento para Y)". Taxa mínima de 95%: o Sonnet às vezes
+      # junta várias afirmações numa linha e rotula só parte delas (ver Curadoria no README), e um desvio
+      # isolado não deve reprovar o build; a perda de rótulos em massa reprova.
+      - type: javascript
+        value: |
+          const itens = output.split('\n').filter(l => /^- ([FCDPRILS]\d+|Fluxo):/.test(l));
+          if (itens.length === 0) return { pass: false, score: 0, reason: 'nenhum item identificado encontrado' };
+          const semRotulo = itens.filter(l => !/\((fato|premissa|julgamento)[^)]*\)[\s.]*$/.test(l));
+          const taxa = (itens.length - semRotulo.length) / itens.length;
+          const ok = taxa >= 0.95;
+          return { pass: ok, score: taxa,
+                   reason: (taxa * 100).toFixed(1) + '% de ' + itens.length + ' itens terminam com rótulo (mínimo 95%)' +
+                           (semRotulo.length ? '; sem rótulo final, ex.: ' + semRotulo[0].slice(0, 80) : '') };
+      # Sem proposta de tecnologia de streaming, etapas ou cronograma (regra do prompt)
+      - type: not-icontains-any
+        value:
+          - 'kafka'
+          - 'flink'
+          - 'kinesis'
+          - 'pulsar'
+          - 'structured streaming'
+      # Ausência de informação no cenário não é ausência no sistema: o prompt proíbe afirmar "não documentado",
+      # "inexistente" ou "sem regras". "sem regras informadas" é a forma correta ("não informado") e é aceita.
+      - type: javascript
+        value: |
+          const achou = output.match(/não documentad[oa]s?|inexistentes?|sem regras(?!\s+informad)/gi) || [];
+          return { pass: achou.length === 0, score: achou.length === 0 ? 1 : 0,
+                   reason: achou.length ? 'afirma ausência no sistema: ' + achou.join(' | ') : 'sem afirmação de ausência no sistema' };
+      # Limite do prompt: 2.000 palavras, com tolerância de 20% (2.400); o limite do prompt é orientação ao
+      # modelo e ultrapassagens pequenas são conhecidas (palavras = tokens com letra ou número)
+      - type: javascript
+        value: |
+          const n = output.split(/\s+/).filter(t => /[\p{L}\p{N}]/u.test(t)).length;
+          return { pass: n <= 2400, score: n <= 2400 ? 1 : 0, reason: n + ' palavras (limite do prompt 2000, tolerância até 2400)' };
+      # Limite próprio (enunciado: 5 s e US$ 0,01): cerca de 2x o maior valor observado
+      - type: latency
+        threshold: 60000
+      - type: cost
+        threshold: 0.08
+
+  - description: Entrada insuficiente (texto que não descreve um pipeline)
+    vars:
+      cenario: 'Receita de bolo de chocolate: misture 3 ovos, 2 xícaras de farinha e 1 xícara de açúcar; asse por 40 minutos.'
+    assert:
+      - type: javascript
+        value: |
+          const f = 'ENTRADA INSUFICIENTE: o cenário não descreve um pipeline em lote identificável ou não indica o que a migração precisa garantir.';
+          const ok = output.trim() === f;
+          return { pass: ok, score: ok ? 1 : 0, reason: ok ? 'frase fixa de insuficiência' : 'saída diferente da frase fixa: ' + output.trim().slice(0, 160) };
+      - type: latency
+        threshold: 15000
+      - type: cost
+        threshold: 0.02

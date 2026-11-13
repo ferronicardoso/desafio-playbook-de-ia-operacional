@@ -49,6 +49,7 @@ Um exemplo de execução com saída real está na seção [Execução](#execuç�
 - As seções 2 e 3 passaram ligeiramente do limite (318 contra 300 e 202 contra 200 palavras). O limite total (2.400 palavras) foi respeitado, com cerca de 2.136 palavras, contadas por tokens com letra ou número.
 - Quase todos os itens saem rotulados como (julgamento), o que é esperado, porque as etapas são decisões do modelo.
 - O resultado vem de duas execuções com um único modelo. A primeira usou uma versão anterior do prompt; a saída registrada abaixo é a da versão final.
+- Os testes promptfoo (seção "Testes determinísticos") verificam estrutura, cobertura de identificadores, etapas completas e limite de palavras. Não avaliam se a ordem de migração dos dependentes ou os critérios de avanço fazem sentido. O Sonnet 5.5 passou do limite de 2.400 palavras do prompt nas duas execuções (2797 e 2808, cerca de 17% acima), e o teste aceita até 2.880.
 
 ## Execução
 
@@ -280,6 +281,56 @@ duplicidades = total_eventos - total_identificadores_unicos; comparar também co
 - D1 → E4; D2 → E5; D3 → E6. (julgamento)
 ```
 
+### Testes determinísticos (promptfoo)
+
+A saída real do elo 1 (diagnóstico) roda como entrada de teste em [`promptfooconfig.yaml`](promptfooconfig.yaml), contra dois provedores, junto com um caso de entrada insuficiente. Comando, a partir desta pasta:
+
+```powershell
+promptfoo eval -c promptfooconfig.yaml --no-cache --output resultado.json
+```
+
+| Item | Valor |
+|---|---|
+| Versão do promptfoo | 0.125.1 |
+| Provedor 1 | OpenAI `gpt-6-sol`, `reasoning_effort: medium` |
+| Provedor 2 | Anthropic `claude-sonnet-5-5`, `thinking.type: between_tools`, `max_tokens: 16000` |
+| Prompt testado | `prompt.md` v1.0.0 (arquivo inteiro, com frontmatter) |
+| Entrada | [`dados/diagnostico.txt`](dados/diagnostico.txt), a saída do elo 1 registrada em [`diagnostico-do-forge`](../diagnostico-do-forge/) |
+
+Asserts:
+
+| Caso | Tipo | Critério |
+|---|---|---|
+| Diagnóstico | `javascript` | título `# PASSOS DA MIGRAÇÃO` e as cinco seções, na ordem |
+| Diagnóstico | `javascript` | todo D, I, P e R do diagnóstico (16 identificadores) aparece na matriz de cobertura |
+| Diagnóstico | `javascript` | ao menos 5 etapas, cada uma com `Critério de avanço` e `Ponto de retorno` |
+| Diagnóstico | `javascript` | a última etapa é a desativação do lote (sem virada única) |
+| Diagnóstico | `contains-all` | `forge-batch-ingest`, `Sentinel`, `Cerebro`, `Pepper` |
+| Diagnóstico | `icontains` | `limiar a definir` (o diagnóstico não traz limiares e o prompt proíbe inventar) |
+| Diagnóstico | `javascript` | sem LaTeX |
+| Diagnóstico | `javascript` | até **2.880** palavras (limite do prompt, 2.400, mais 20%) |
+| Diagnóstico | `latency` e `cost` | até **100000 ms** e **US$ 0,20** (limites próprios; enunciado: 5000 ms e US$ 0,01) |
+| Insuficiente | `javascript` | saída exatamente igual à frase fixa `ENTRADA INSUFICIENTE: ...` |
+| Insuficiente | `latency` e `cost` | até 15000 ms e US$ 0,02 |
+
+Antes da primeira execução, os asserts foram validados sem custo contra a saída real registrada acima (passam) e contra saídas truncadas (falham).
+
+Resultado da última execução (`Results: 4 passed (100%), 0 failed, 0 errors`):
+
+| Caso | Modelo | Resultado | Latência | Custo (US$) | Palavras |
+|---|---|---|---|---|---|
+| Diagnóstico | gpt-6-sol | PASS | 41811 ms | 0,0724 | 2541 |
+| Diagnóstico | claude-sonnet-5-5 | PASS | 49685 ms | 0,1009 | 2808 |
+| Insuficiente | gpt-6-sol | PASS | 2093 ms | 0,0061 | 12 |
+| Insuficiente | claude-sonnet-5-5 | PASS | 1093 ms | 0,0079 | 12 |
+
+Histórico das execuções até chegar a esse resultado:
+
+| Execução | Configuração | Resultado | Falhas |
+|---|---|---|---|
+| 1 | até 2.400 palavras (limite do prompt), limites de 150 s e US$ 0,25 | 3/4 | Sonnet: 2797 palavras, com a seção 4 em 1536 contra o limite de 1.050 e a seção 2 em 405 contra 300 |
+| 2 | tolerância de 20% (2.880 palavras), limites de 100 s e US$ 0,20 | 4/4 | nenhuma |
+
 ## Curadoria
 
 **Técnica:** encadeamento de prompts (prompt chaining), sem few-shot. Este elo resolve uma etapa do raciocínio: a partir do diagnóstico, definir a sequência de passos da migração. Os blocos do prompt mapeiam assim: o passo 2 do `<metodo>` herda o contexto, para que o elo 3 não precise do diagnóstico; o passo 3 define a coexistência; o passo 4 ordena as etapas (levantamento, execução em paralelo, migração de um dependente por vez, desativação do lote); os passos 5 a 7 detalham etapas, critérios de avanço e pontos de retorno; `<estrutura_esperada_da_entrada>` declara o que o elo espera ler do elo 1; `<regras>` proíbe virada única e exige que o lote só seja desativado em etapa própria. Exemplos de plano completo ancorariam o modelo em uma ordem específica e prejudicariam o reuso.
@@ -289,3 +340,11 @@ duplicidades = total_eventos - total_identificadores_unicos; comparar também co
 **Refinos:** o prompt foi criado por meta-prompting com o Opus 5.5 e refinado com revisão humana. O `nome` e as tags passaram ao padrão do repositório e a frase de insuficiência passou para caixa alta. Os pontos frágeis passaram a ser herdados e o limite de palavras subiu de 2.200 para 2.400, para dar margem ao contexto herdado que a seção 1 precisa carregar. A primeira execução mostrou três problemas, corrigidos antes da execução registrada: a primeira etapa, "contratos e critérios", listava como pré-requisito lacunas que ela mesma deveria resolver, e quase todas as lacunas eram bloqueantes; os pontos frágeis herdados não eram tratados em nenhuma etapa nem constavam da matriz; e todos os critérios de avanço saíram sem limiar e sem janela. O prompt passou a definir a primeira etapa como de levantamento (não altera o sistema) e a excluir dos pré-requisitos as lacunas que a própria etapa resolve, a exigir o campo "Pontos frágeis tratados" e a linha `P#` na matriz, a permitir janelas expressas em eventos do cenário (rotuladas como julgamento, sem valores numéricos) e a justificar a ordem de migração dos dependentes. Os limites por seção foram redistribuídos (700, 300, 200, 1.050 e 150 palavras).
 
 **Modelo:** GPT 6 Sol com esforço de raciocínio médio. Na execução final produziu sete etapas, com desativação do lote em etapa própria e precedida de execução em paralelo e reconciliação, manteve identificadores e números herdados, cobriu todos os pontos frágeis e riscos na matriz (conferida linha a linha contra os campos das etapas) e justificou a ordem dos dependentes. Os pontos fracos foram os critérios de avanço sem limiar e o ponto de retorno da etapa final.
+
+**Curadoria dos testes (CP10):**
+
+- **Entradas:** a saída real do elo 1, gravada em `dados/diagnostico.txt`, para o teste não depender de executar o elo 1 antes, e um texto sem relação com diagnóstico (uma receita de bolo) para o caso de entrada insuficiente.
+- **O que passou desde a primeira execução:** os casos de entrada insuficiente, a cobertura de todos os 16 identificadores (D, I, P e R) na matriz, as etapas com critério de avanço e ponto de retorno, a desativação do lote como última etapa e a expressão `limiar a definir`, nos dois modelos. O GPT 6 Sol passou em todas as execuções. O prompt não foi alterado: a versão testada é a v1.0.0.
+- **O que falhou e o que mudou nos testes:** na execução 1, o Sonnet 5.5 produziu 2797 palavras contra o limite de 2.400 do prompt, com a seção 4 em 1536 contra 1.050 e a seção 2 em 405 contra 300. Na execução 2 produziu 2808, de modo que o excesso é sistemático (cerca de 17%) e não ruído, enquanto o GPT ficou entre 2274 e 2541. O limite do prompt é orientação ao modelo, e as Limitações já registravam ultrapassagens menores de seção. Em vez de endurecer o prompt, sem garantia de que o Sonnet obedeça, o teste passou a aceitar 20% a mais (2.880 palavras), que ainda barra um estouro grosseiro. A margem do Sonnet é estreita (72 palavras na última execução).
+- **Limites de latência e custo:** de 150 s e US$ 0,25 para 100 s e US$ 0,20, cerca de 2 vezes o maior valor medido (49,7 s e US$ 0,10 no Sonnet).
+- **O que os testes não cobrem:** a regra de proibir virada única é verificada só pela etapa final de desativação do lote; a ordem de migração dos dependentes e a adequação dos critérios de avanço não são avaliadas.

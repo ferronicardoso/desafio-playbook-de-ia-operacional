@@ -48,6 +48,7 @@ Um exemplo de execução com saída real está na seção [Execução](#execuç�
 - Os pontos frágeis e os riscos têm sobreposição (por exemplo, a coexistência inconsistente aparece como ponto frágil e como risco de divergência entre caminhos), e os riscos apontam quase todos para os mesmos dependentes e para o mesmo invariante, o que reduz a utilidade da matriz de riscos por dependente.
 - O escopo é pipeline em lote com dependentes conhecidos e migração para eventos. Para outro tipo de mudança, a lista de dimensões de risco do passo 6 precisa ser adaptada.
 - O resultado vem de duas execuções com um único modelo. A primeira usou uma versão anterior do prompt e serviu para ajustá-lo; a saída registrada abaixo é a da versão final.
+- Os testes promptfoo (seção "Testes determinísticos") verificam estrutura, preservação de números e nomes, rótulos e limites. Não avaliam se os pontos frágeis, riscos e invariantes estão corretos. O Sonnet 5.5 às vezes junta várias afirmações numa linha e rotula só parte delas; o teste tolera até 5% de itens sem rótulo final.
 
 ## Execução
 
@@ -163,6 +164,57 @@ A saída foi copiada sem edição, exceto a remoção das barras de cópia do Ch
 - S5: A continuidade exigida em F9 inclui a preservação dos contratos de consumo durante coexistência e rollback — invalidada se forem permitidas alterações ou interrupções previamente aceitas pelos consumidores. (premissa)
 ```
 
+### Testes determinísticos (promptfoo)
+
+O cenário do Forge acima roda como caso de teste em [`promptfooconfig.yaml`](promptfooconfig.yaml), contra dois provedores, junto com um caso de entrada insuficiente. Comando, a partir desta pasta:
+
+```powershell
+promptfoo eval -c promptfooconfig.yaml --no-cache --output resultado.json
+```
+
+| Item | Valor |
+|---|---|
+| Versão do promptfoo | 0.125.1 |
+| Provedor 1 | OpenAI `gpt-6-sol`, `reasoning_effort: medium` |
+| Provedor 2 | Anthropic `claude-sonnet-5-5`, `thinking.type: between_tools`, `max_tokens: 16000` |
+| Prompt testado | `prompt.md` v1.0.0 (arquivo inteiro, com frontmatter) |
+| Entrada | [`dados/cenario-forge.txt`](dados/cenario-forge.txt), o cenário da seção anterior |
+
+Asserts:
+
+| Caso | Tipo | Critério |
+|---|---|---|
+| Cenário | `javascript` | título `# DIAGNÓSTICO DO PIPELINE` e as sete seções, na ordem |
+| Cenário | `contains-all` | `60min`, `14 etapas`, `40min`, `forge-batch-ingest`, `Sentinel`, `Cerebro`, `Pepper` |
+| Cenário | `javascript` | ao menos 95% dos itens identificados (F1, C1, D1...) terminam com rótulo `(fato)`, `(premissa)` ou `(julgamento)`; rótulo composto como `(fato para X; julgamento para Y)` é aceito |
+| Cenário | `not-icontains-any` | `kafka`, `flink`, `kinesis`, `pulsar`, `structured streaming` (o prompt proíbe propor solução) |
+| Cenário | `javascript` | não afirma ausência no sistema (`não documentado`, `inexistente`, `sem regras`); `sem regras informadas` é aceito |
+| Cenário | `javascript` | até **2.400** palavras (limite do prompt, 2.000, mais 20%) |
+| Cenário | `latency` e `cost` | até **60000 ms** e **US$ 0,08** (limites próprios; enunciado: 5000 ms e US$ 0,01) |
+| Insuficiente | `javascript` | saída exatamente igual à frase fixa `ENTRADA INSUFICIENTE: ...` |
+| Insuficiente | `latency` e `cost` | até 15000 ms e US$ 0,02 |
+
+Antes da primeira execução, os asserts foram validados sem custo contra a saída real registrada acima (passam) e contra saídas truncadas (falham).
+
+Resultado da última execução (`Results: 4 passed (100%), 0 failed, 0 errors`):
+
+| Caso | Modelo | Resultado | Latência | Custo (US$) | Palavras |
+|---|---|---|---|---|---|
+| Cenário | gpt-6-sol | PASS | 17664 ms | 0,0216 | 850 |
+| Cenário | claude-sonnet-5-5 | PASS | 24524 ms | 0,0450 | 1365 |
+| Insuficiente | gpt-6-sol | PASS | 1236 ms | 0,0007 | 20 |
+| Insuficiente | claude-sonnet-5-5 | PASS | 1789 ms | 0,0065 | 20 |
+
+Itens com rótulo final: 100% de 30 no GPT e 97,9% de 48 no Sonnet (um item sem rótulo final).
+
+Histórico das execuções até chegar a esse resultado:
+
+| Execução | Configuração | Resultado | Falhas |
+|---|---|---|---|
+| 1 | até 2.000 palavras, rótulo final estrito, limites de 120 s e US$ 0,15 | 3/4 | Sonnet: o item P1 terminou com rótulo composto, `(fato para o dobro de volume; julgamento para a extrapolação do tempo)` |
+| 2 | rótulo composto aceito, até 2.400 palavras, limites de 60 s e US$ 0,08 | 2/4 | GPT: o assert de ausência reprovou `sem regras informadas`, forma correta de dizer "não informado"; Sonnet: a linha `Fluxo` terminou sem rótulo final |
+| 3 | assert de ausência com exceção para `sem regras informadas`; taxa mínima de 95% de itens com rótulo | 4/4 | nenhuma |
+
 ## Curadoria
 
 **Técnica:** encadeamento de prompts (prompt chaining), sem few-shot. A migração é grande demais para um prompt só, e uma resposta única sairia rasa. O prompt de diagnóstico resolve uma etapa do raciocínio: separar o que o cenário informa do que ele não informa e entregar um artefato estruturado que vira a entrada do elo seguinte. Os blocos do prompt mapeiam assim: o passo 2 do `<metodo>` extrai os fatos literais; os passos 3 a 5 mapeiam componentes, dependentes e pontos frágeis; os passos 6 e 7 identificam riscos e invariantes; o passo 8 separa lacunas de premissas; `<regras>` fixa rótulos, identificadores e limites; `<formato_de_saida>` fixa as sete seções que o elo 2 espera ler. Exemplos de diagnóstico completo ancorariam o modelo em um pipeline específico e prejudicariam o reuso.
@@ -172,3 +224,12 @@ A saída foi copiada sem edição, exceto a remoção das barras de cópia do Ch
 **Refinos:** o prompt foi criado por meta-prompting com o Opus 5.5 e refinado com revisão humana. O `nome` e as tags passaram ao padrão do repositório, a frase de insuficiência passou para caixa alta e o exemplo de fórmula, que não tinha uso, foi removido. A primeira execução mostrou três problemas, corrigidos antes da execução registrada: o estado-alvo da migração (consumir do Relay) saiu como invariante, embora deixe de valer após um rollback; invariantes não verificáveis ("conforme critérios ainda não informados") e duplicados; e afirmações como "não documentado" para o que o cenário apenas não informa. O passo 7 passou a tratar o estado-alvo como fato, a preferir a lacuna a um invariante não verificável e a unir invariantes verificados da mesma forma, e uma regra nova pediu "não informado" no lugar de "não documentado" ou "inexistente". A seção 7 tinha limite de 150 palavras e saiu com 460; o limite passou a ser de 500 e o total, de 1.800 para 2.000 palavras, com redistribuição por seção.
 
 **Modelo:** GPT 6 Sol com esforço de raciocínio médio. Na execução final seguiu as sete seções, preservou os números e os nomes do cenário, não assumiu a origem do lote (registrou como lacuna), não propôs solução e usou "não informado" nas lacunas. O ponto fraco foi o invariante único.
+
+**Curadoria dos testes (CP10):**
+
+- **Entradas:** o cenário do Forge, igual ao da seção Execução, e um texto sem relação com pipeline (uma receita de bolo) para o caso de entrada insuficiente. O segundo é curto e barato (cerca de 1 a 2 s e menos de US$ 0,01 por modelo).
+- **O que passou desde a primeira execução:** os casos de entrada insuficiente nos dois modelos, a preservação dos números e nomes do cenário, as sete seções na ordem e a ausência de solução proposta. O prompt não precisou de alteração: a versão testada é a v1.0.0.
+- **O que falhou e o que mudou nos testes:** o Sonnet 5.5 junta, às vezes, várias afirmações numa linha e rotula só parte delas. Na execução 1 foi um item com rótulo composto (`(fato para ...; julgamento para ...)`); na execução 2, a linha `Fluxo` terminou sem rótulo. São desvios de linhas diferentes, 1 em cerca de 47 itens, e o assert estrito reprovaria o Sonnet de forma intermitente. O assert passou a aceitar rótulo composto e a exigir ao menos 95% dos itens com rótulo final, o que tolera um desvio isolado e reprova a perda de rótulos em massa (confirmado contra uma saída degradada, em 50%). O prompt ficou como estava. O outro ajuste foi um falso positivo meu: o assert de ausência reprovou o GPT por `sem regras informadas`, que é a forma correta de dizer "não informado"; a regra passou a aceitar essa expressão e continua reprovando `sem regras` e `inexistente` afirmados.
+- **Limites de latência e custo:** os limites iniciais (120 s e US$ 0,15) ficaram de 2,5 a 4 vezes acima do observado e foram apertados para cerca de 2 vezes o maior valor medido (60 s e US$ 0,08). Cada valor vem de uma ou poucas execuções, e o custo do Sonnet varia com o raciocínio adaptativo.
+- **Limite de palavras:** o limite do prompt (2.000) é orientação ao modelo; o teste aceita 20% a mais. Nenhuma execução chegou perto de 2.000 (850 a 1545 palavras).
+- **O que os testes não cobrem:** a correção do diagnóstico (se os pontos frágeis e os riscos estão certos) não é verificada; isso exigiria um juiz, que não foi configurado para este prompt.

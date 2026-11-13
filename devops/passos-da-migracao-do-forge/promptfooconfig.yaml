@@ -1,0 +1,111 @@
+description: Passos da migração do Forge - testes determinísticos (CP10)
+
+# Caminhos relativos a esta pasta. Executar a partir dela:
+#   promptfoo eval -c promptfooconfig.yaml --no-cache --output resultado.json
+prompts:
+  - file://prompt.md
+
+providers:
+  - id: openai:gpt-6-sol
+    label: openai-gpt-6-sol
+    config:
+      reasoning_effort: medium
+  - id: anthropic:messages:claude-sonnet-5-5
+    label: anthropic-sonnet-5-5
+    config:
+      max_tokens: 16000
+      thinking:
+        type: between_tools
+
+tests:
+  - description: Diagnóstico do Forge (saída real do elo 1) como entrada
+    vars:
+      diagnostico: file://dados/diagnostico.txt
+    assert:
+      # Título e cinco seções, nesta ordem
+      - type: javascript
+        value: |
+          if (!output.trim().startsWith('# PASSOS DA MIGRAÇÃO')) {
+            return { pass: false, score: 0, reason: 'título "# PASSOS DA MIGRAÇÃO" ausente no início' };
+          }
+          const titulos = [
+            '## 1. Contexto herdado', '## 2. Lacunas e premissas', '## 3. Estratégia de coexistência',
+            '## 4. Etapas', '## 5. Matriz de cobertura',
+          ];
+          let pos = -1;
+          const problemas = [];
+          for (const t of titulos) {
+            const i = output.indexOf(t, pos + 1);
+            if (i < 0 || (i > 0 && output[i - 1] !== '\n')) { problemas.push(t); continue; }
+            pos = i;
+          }
+          return { pass: problemas.length === 0, score: problemas.length === 0 ? 1 : 0,
+                   reason: problemas.length ? 'seções ausentes ou fora de ordem: ' + problemas.join(' | ') : 'cinco seções na ordem' };
+      # Cada dependente (D#), invariante (I#), ponto frágil (P#) e risco (R#) do diagnóstico aparece na matriz de cobertura
+      - type: javascript
+        value: |
+          const entrada = context.vars.diagnostico;
+          const ids = [...new Set([...entrada.matchAll(/^- ([IPRD]\d+):/gm)].map(m => m[1]))];
+          const i = output.indexOf('## 5. Matriz de cobertura');
+          if (i < 0) return { pass: false, score: 0, reason: 'seção 5 ausente' };
+          const matriz = output.slice(i);
+          const faltando = ids.filter(id => !new RegExp('\\b' + id + '\\b').test(matriz));
+          return { pass: faltando.length === 0, score: faltando.length === 0 ? 1 : 0,
+                   reason: faltando.length ? 'fora da matriz: ' + faltando.join(', ') : ids.length + ' IDs (D, I, P, R) cobertos na matriz' };
+      # Sequência de etapas: mínimo de 5, todas com critério de avanço e ponto de retorno
+      - type: javascript
+        value: |
+          const etapas = [...output.matchAll(/^### (E\d+)[^\n]*/gm)];
+          const criterios = (output.match(/^- Critério de avanço:/gm) || []).length;
+          const retornos = (output.match(/^- Ponto de retorno:/gm) || []).length;
+          const ok = etapas.length >= 5 && criterios === etapas.length && retornos === etapas.length;
+          return { pass: ok, score: ok ? 1 : 0,
+                   reason: etapas.length + ' etapas, ' + criterios + ' critérios de avanço, ' + retornos + ' pontos de retorno (mínimo 5 etapas, um critério e um retorno por etapa)' };
+      # A desativação do lote é uma etapa própria e a última (sem virada única)
+      - type: javascript
+        value: |
+          const titulos = [...output.matchAll(/^### (E\d+)[^\n]*/gm)].map(m => m[0]);
+          if (titulos.length === 0) return { pass: false, score: 0, reason: 'nenhuma etapa encontrada' };
+          const ultima = titulos[titulos.length - 1];
+          const ok = /desativ/i.test(ultima);
+          return { pass: ok, score: ok ? 1 : 0, reason: 'última etapa: ' + ultima };
+      # Nomes herdados do diagnóstico preservados
+      - type: contains-all
+        value:
+          - 'forge-batch-ingest'
+          - 'Sentinel'
+          - 'Cerebro'
+          - 'Pepper'
+      # O diagnóstico não traz limiar numérico: o prompt proíbe inventar e deve declarar "limiar a definir"
+      - type: icontains
+        value: 'limiar a definir'
+      # Sem LaTeX nas fórmulas
+      - type: javascript
+        value: |
+          const achou = /\\frac|\\\(|\\\[|\$\$/.test(output);
+          return { pass: !achou, score: achou ? 0 : 1, reason: achou ? 'delimitador ou comando LaTeX encontrado' : 'sem LaTeX' };
+      # Limite do prompt: 2.400 palavras, com tolerância de 20% (2.880); o limite do prompt é orientação ao
+      # modelo e ultrapassagens são conhecidas (palavras = tokens com letra ou número)
+      - type: javascript
+        value: |
+          const n = output.split(/\s+/).filter(t => /[\p{L}\p{N}]/u.test(t)).length;
+          return { pass: n <= 2880, score: n <= 2880 ? 1 : 0, reason: n + ' palavras (limite do prompt 2400, tolerância até 2880)' };
+      # Limite próprio (enunciado: 5 s e US$ 0,01): cerca de 2x o maior valor observado
+      - type: latency
+        threshold: 100000
+      - type: cost
+        threshold: 0.20
+
+  - description: Entrada insuficiente (texto que não é um diagnóstico)
+    vars:
+      diagnostico: 'Receita de bolo de chocolate: misture 3 ovos, 2 xícaras de farinha e 1 xícara de açúcar; asse por 40 minutos.'
+    assert:
+      - type: javascript
+        value: |
+          const f = 'ENTRADA INSUFICIENTE: o conteúdo recebido não é um diagnóstico de pipeline reconhecível.';
+          const ok = output.trim() === f;
+          return { pass: ok, score: ok ? 1 : 0, reason: ok ? 'frase fixa de insuficiência' : 'saída diferente da frase fixa: ' + output.trim().slice(0, 160) };
+      - type: latency
+        threshold: 15000
+      - type: cost
+        threshold: 0.02
