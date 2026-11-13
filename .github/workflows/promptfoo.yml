@@ -4,9 +4,11 @@ name: Testes dos prompts (promptfoo)
 # Justificativa das decisões: docs/gate-de-qualidade.md
 #
 # - Pull request: roda só os prompts alterados (a action pula o job quando prompt, config ou dependências
-#   da config não mudaram).
-# - Push na main, execução semanal e disparo manual: suíte completa (force-run), para pegar regressão em
-#   prompt que ninguém alterou (por exemplo, mudança de comportamento do modelo no provedor).
+#   da config não mudaram). É o único gatilho ligado a alteração de código: commit ou push, sozinhos,
+#   não executam o workflow, e o merge na main também não (não há gatilho de push).
+# - Disparo manual: suíte completa (force-run), para pegar regressão em prompt que ninguém alterou (por
+#   exemplo, mudança de comportamento do modelo no provedor). Só roda quando alguém dispara; não há
+#   agenda, porque cada execução completa custa cerca de US$ 1 nas chaves dos provedores.
 # - Gate: qualquer teste reprovado derruba o job. No prompt de causa-raiz, o juiz LLM roda 3 vezes e cada
 #   teste precisa passar em 2 (repeat-min-pass), para tolerar a flutuação do juiz.
 
@@ -19,16 +21,6 @@ on:
       - 'devops/**/dados/**'
       - 'devops/**/juiz/**'
       - '.github/workflows/promptfoo.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'devops/**/prompt.md'
-      - 'devops/**/promptfooconfig.yaml'
-      - 'devops/**/dados/**'
-      - 'devops/**/juiz/**'
-      - '.github/workflows/promptfoo.yml'
-  schedule:
-    - cron: '0 6 * * 1' # segunda-feira, 06:00 UTC
   workflow_dispatch:
 
 permissions:
